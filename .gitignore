@@ -13,3 +13,10 @@ build/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# WiFi 配置 (包含敏感信息)
+code/wifi_config.h
+
+# ESPHome 敏感配置
+esphome/secrets.yaml
+esphome/.esphome/
