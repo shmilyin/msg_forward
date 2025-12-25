@@ -107,50 +107,68 @@ void handleQuery() {
   }
   else if (type == "siminfo") {
     // SIM 卡信息查询
-    success = true;
-    message = "<table class='info-table'>";
-    
-    String resp = sendATCommand("AT+CIMI", 2000);
-    String imsi = "未知";
-    if (resp.indexOf("OK") >= 0) {
-      int start = resp.indexOf('\n');
-      if (start >= 0) {
-        int end = resp.indexOf('\n', start + 1);
-        if (end < 0) end = resp.indexOf('\r', start + 1);
-        if (end > start) {
-          imsi = resp.substring(start + 1, end);
-          imsi.trim();
-          if (imsi == "OK" || imsi.length() < 10) imsi = "未知";
+    // 先检测 SIM 卡是否存在
+    String cpinResp = sendATCommand("AT+CPIN?", 2000);
+    if (cpinResp.indexOf("+CPIN: READY") < 0) {
+      // SIM 卡不存在或异常
+      success = false;
+      if (cpinResp.indexOf("ERROR") >= 0 || cpinResp.indexOf("NOT INSERTED") >= 0 || 
+          cpinResp.indexOf("NOT READY") >= 0 || cpinResp.indexOf("+CME ERROR") >= 0) {
+        message = "没有检测到 SIM 卡，请检查是否正确插入";
+      } else if (cpinResp.indexOf("SIM PIN") >= 0) {
+        message = "SIM 卡需要输入 PIN 码";
+      } else if (cpinResp.indexOf("SIM PUK") >= 0) {
+        message = "SIM 卡已锁定，需要 PUK 码解锁";
+      } else {
+        message = "SIM 卡状态异常";
+      }
+    } else {
+      // SIM 卡正常，继续查询详细信息
+      success = true;
+      message = "<table class='info-table'>";
+      
+      String resp = sendATCommand("AT+CIMI", 2000);
+      String imsi = "未知";
+      if (resp.indexOf("OK") >= 0) {
+        int start = resp.indexOf('\n');
+        if (start >= 0) {
+          int end = resp.indexOf('\n', start + 1);
+          if (end < 0) end = resp.indexOf('\r', start + 1);
+          if (end > start) {
+            imsi = resp.substring(start + 1, end);
+            imsi.trim();
+            if (imsi == "OK" || imsi.length() < 10) imsi = "未知";
+          }
         }
       }
-    }
-    message += "<tr><td>IMSI</td><td>" + imsi + "</td></tr>";
-    
-    resp = sendATCommand("AT+ICCID", 2000);
-    String iccid = "未知";
-    if (resp.indexOf("+ICCID:") >= 0) {
-      int idx0 = resp.indexOf("+ICCID:");
-      String tmp = resp.substring(idx0 + 7);
-      int endIdx0 = tmp.indexOf('\r');
-      if (endIdx0 < 0) endIdx0 = tmp.indexOf('\n');
-      if (endIdx0 > 0) iccid = tmp.substring(0, endIdx0);
-      iccid.trim();
-    }
-    message += "<tr><td>ICCID</td><td>" + iccid + "</td></tr>";
-    
-    resp = sendATCommand("AT+CNUM", 2000);
-    String phoneNum = "未存储或不支持";
-    if (resp.indexOf("+CNUM:") >= 0) {
-      int idx0 = resp.indexOf(",\"");
-      if (idx0 >= 0) {
-        int endIdx0 = resp.indexOf("\"", idx0 + 2);
-        if (endIdx0 > idx0) {
-          phoneNum = resp.substring(idx0 + 2, endIdx0);
+      message += "<tr><td>IMSI</td><td>" + imsi + "</td></tr>";
+      
+      resp = sendATCommand("AT+ICCID", 2000);
+      String iccid = "未知";
+      if (resp.indexOf("+ICCID:") >= 0) {
+        int idx0 = resp.indexOf("+ICCID:");
+        String tmp = resp.substring(idx0 + 7);
+        int endIdx0 = tmp.indexOf('\r');
+        if (endIdx0 < 0) endIdx0 = tmp.indexOf('\n');
+        if (endIdx0 > 0) iccid = tmp.substring(0, endIdx0);
+        iccid.trim();
+      }
+      message += "<tr><td>ICCID</td><td>" + iccid + "</td></tr>";
+      
+      resp = sendATCommand("AT+CNUM", 2000);
+      String phoneNum = "未存储或不支持";
+      if (resp.indexOf("+CNUM:") >= 0) {
+        int idx0 = resp.indexOf(",\"");
+        if (idx0 >= 0) {
+          int endIdx0 = resp.indexOf("\"", idx0 + 2);
+          if (endIdx0 > idx0) {
+            phoneNum = resp.substring(idx0 + 2, endIdx0);
+          }
         }
       }
+      message += "<tr><td>本机号码</td><td>" + phoneNum + "</td></tr>";
+      message += "</table>";
     }
-    message += "<tr><td>本机号码</td><td>" + phoneNum + "</td></tr>";
-    message += "</table>";
   }
   else if (type == "network") {
     // 网络状态查询
@@ -331,7 +349,8 @@ void handlePing() {
             
             gotPingResult = true;
             
-            bool pingSuccess = (result == 0 || result == 1) || (params.indexOf(',') >= 0 && params.length() > 5);
+            // result: 0=成功, 1=异常/失败
+            bool pingSuccess = (result == 0) || (params.indexOf(',') >= 0 && params.length() > 5);
             
             if (pingSuccess) {
               int idx1 = params.indexOf(',');

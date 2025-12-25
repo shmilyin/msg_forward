@@ -215,16 +215,16 @@ void setup() {
     mqttReconnect();
   }
   
-  // 启用看门狗 (30秒超时)
+  // 启用看门狗 (60秒超时)
   // 适配 ESP32 Arduino Core v3.0+
   esp_task_wdt_config_t wdt_config = {
-      .timeout_ms = 30000,
+      .timeout_ms = 60000,
       .idle_core_mask = (1 << 0), // ESP32-C3 是单核，使用 core 0
       .trigger_panic = true
   };
   esp_task_wdt_init(&wdt_config);
   esp_task_wdt_add(NULL);
-  Serial.println("看门狗已启用(30s)");
+  Serial.println("看门狗已启用(60s)");
 }
 
 // ========== loop 函数 ==========

@@ -2,6 +2,13 @@
  * web_handlers.ino - Web 服务器处理函数实现
  */
 
+// 设置禁止缓存的 HTTP 头
+void setNoCacheHeaders() {
+  server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "0");
+}
+
 // 检查 HTTP Basic 认证
 bool checkAuth() {
   if (!server.authenticate(config.webUser.c_str(), config.webPass.c_str())) {
@@ -258,6 +265,7 @@ void handleRoot() {
   html.replace("%PUSH_CHANNELS%", channelsHtml);
   
   
+  setNoCacheHeaders();
   server.send(200, "text/html", html);
 }
 

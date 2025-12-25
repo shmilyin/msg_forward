@@ -8,6 +8,7 @@
 extern WebServer server;
 
 // Web 页面处理
+void setNoCacheHeaders();
 bool checkAuth();
 void handleRoot();
 void handleToolsPage();
