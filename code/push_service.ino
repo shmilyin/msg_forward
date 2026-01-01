@@ -263,17 +263,53 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
         
         Serial.println("钉钉加签URL: " + requestUrl);
       }
-      
+
+    case PUSH_TYPE_FEISHU: {
+      // 飞书群聊机器人 (Webhook)
+      // URL格式:
+      // https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot?lang=zh-CN
+      // 如果配置了加签密钥（key1），则需要添加签名
+
+      String requestUrl = channel.url;
+
+      // 检查是否需要加签
+      if (channel.key1.length() > 0) {
+        // 获取当前时间戳（秒）
+        unsigned long long timestampSec = (unsigned long long)time(nullptr);
+        // 格式化为 10 位时间戳字符串
+        char timestampBuf[16];
+        snprintf(timestampBuf, sizeof(timestampBuf), "%llu", timestampSec);
+        String timestampStr = String(timestampBuf);
+
+        // 构造签名字符串
+        String stringToSign = timestampStr + "\n" + channel.key1;
+
+        // 飞书的签名方式和钉钉有所不同
+        String sign = hmacSha256Base64(stringToSign, "");
+        sign = urlEncode(sign);
+
+        // 添加签名参数到 URL
+        if (requestUrl.indexOf('?') == -1) {
+          requestUrl += "?";
+        } else {
+          requestUrl += "&";
+        }
+        requestUrl += "timestamp=" + timestampStr;
+        requestUrl += "&sign=" + sign;
+
+        Serial.println("飞书加签URL: " + requestUrl);
+      }
+
       String content = "📱 来自: " + String(sender) + "\n" + String(message) + "\n\n" + String(timestamp);
       String jsonData = "{";
-      jsonData += "\"msgtype\":\"text\",";
-      jsonData += "\"text\":{\"content\":\"" + jsonEscape(content) + "\"}";
+      jsonData += "\"msg_type\":\"text\",";
+      jsonData += "\"content\":{\"text\":\"" + jsonEscape(content) + "\"}";
       jsonData += "}";
-      Serial.println("钉钉: " + jsonData);
+      Serial.println("飞书: " + jsonData);
       sendHttpRequest(requestUrl, "POST", "application/json", jsonData);
       break;
     }
-    
+
     default:
       Serial.println("未知推送类型");
       return;

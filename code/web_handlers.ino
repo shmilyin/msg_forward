@@ -248,8 +248,8 @@ void handleRoot() {
     for (int t = 1; t <= 7; t++) {
       html.replace("%CH" + idx + "_T" + String(t) + "%", tp == t ? "selected" : "");
     }
-    // Key1 显示条件 (Telegram=5 或 钉钉=7)
-    bool showK1 = (tp == 5 || tp == 7);
+    // Key1 显示条件 (Telegram=5 或 钉钉=7 或 飞书=8)
+    bool showK1 = (tp == 5 || tp == 7 || tp == 8);
     html.replace("%CH" + idx + "_K1D%", showK1 ? "block" : "none");
     html.replace("%CH" + idx + "_K1L%", tp == 5 ? "Chat ID" : "加签密钥 (可选)");
     // 自定义模板显示条件 (type=4)

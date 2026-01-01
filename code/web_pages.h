@@ -419,6 +419,7 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
               <option value="5" %CH0_T5%>Telegram Bot</option>
               <option value="6" %CH0_T6%>企业微信</option>
               <option value="7" %CH0_T7%>钉钉</option>
+              <option value="8" %CH0_T8%>飞书</option>
             </select>
           </div>
           <div class="fg"><label>URL</label><input name="push0url" value="%CH0_URL%"></div>
@@ -444,6 +445,7 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
               <option value="5" %CH1_T5%>Telegram Bot</option>
               <option value="6" %CH1_T6%>企业微信</option>
               <option value="7" %CH1_T7%>钉钉</option>
+              <option value="8" %CH1_T8%>飞书</option>
             </select>
           </div>
           <div class="fg"><label>URL</label><input name="push1url" value="%CH1_URL%"></div>
@@ -469,6 +471,7 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
               <option value="5" %CH2_T5%>Telegram Bot</option>
               <option value="6" %CH2_T6%>企业微信</option>
               <option value="7" %CH2_T7%>钉钉</option>
+              <option value="8" %CH2_T8%>飞书</option>
             </select>
           </div>
           <div class="fg"><label>URL</label><input name="push2url" value="%CH2_URL%"></div>
@@ -752,8 +755,8 @@ function wfTog(i){
 function upd(i){
   var t=$('tp'+i).value;
   $('cf'+i).style.display=(t=='4')?'block':'none'; // 自定义模板
-  // Telegram(5) 和 钉钉(7) 需要显示 Key1 输入框
-  var showK1=(t=='5'||t=='7');
+  // Telegram(5) 、钉钉(7)、飞书(8)  需要显示 Key1 输入框
+  var showK1=(t=='5'||t=='7'||t=='8');
   $('k1'+i).style.display=showK1?'block':'none';
   // 动态更新标签
   var lbl=$('k1l'+i);
