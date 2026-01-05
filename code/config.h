@@ -21,7 +21,8 @@ enum PushType {
   PUSH_TYPE_CUSTOM = 4,    // 自定义模板
   PUSH_TYPE_TELEGRAM = 5,  // Telegram Bot
   PUSH_TYPE_WECOM = 6,     // 企业微信机器人
-  PUSH_TYPE_DINGTALK = 7   // 钉钉机器人
+  PUSH_TYPE_DINGTALK = 7,  // 钉钉机器人
+  PUSH_TYPE_FEISHU = 8     // 飞书群聊机器人
 };
 
 // 最大推送通道数

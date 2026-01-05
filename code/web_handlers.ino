@@ -2,6 +2,8 @@
  * web_handlers.ino - Web 服务器处理函数实现
  */
 
+#include "web_pages.h"
+
 // 设置禁止缓存的 HTTP 头
 void setNoCacheHeaders() {
   server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -92,6 +94,18 @@ void blink_short(unsigned long gap_time) {
 }
 
 // 处理配置页面请求
+void handleCSS() {
+  server.sendHeader("Cache-Control", "max-age=86400");
+  server.send(200, "text/css; charset=utf-8", commonCss);
+}
+
+// 处理配置页面请求
+void handleJS() {
+  server.sendHeader("Cache-Control", "max-age=86400");
+  server.send(200, "text/javascript; charset=utf-8", commonJs);
+}
+
+// 处理配置页面请求
 void handleRoot() {
   if (!checkAuth()) return;
 
@@ -100,10 +114,10 @@ void handleRoot() {
 
   // 预分配足够的内存（htmlPage ~52KB + commonCss ~10KB + 其他替换 ~5KB）
   String html;
-  html.reserve(81920);  // 预分配 80KB
+  html.reserve(65536);  // 预分配 80KB
   html = htmlPage;
   
-  html.replace("%COMMON_CSS%", commonCss);
+  // html.replace("%COMMON_CSS%", commonCss);
   // html.replace("%COMMON_JS%", commonJs); // JS 已合并
   html.replace("%IP%", WiFi.localIP().toString());
 
@@ -245,11 +259,11 @@ void handleRoot() {
     html.replace("%CH" + idx + "_K1%", config.pushChannels[i].key1);
     html.replace("%CH" + idx + "_BODY%", config.pushChannels[i].customBody);
     // 类型选中
-    for (int t = 1; t <= 7; t++) {
+    for (int t = 1; t <= 8; t++) {
       html.replace("%CH" + idx + "_T" + String(t) + "%", tp == t ? "selected" : "");
     }
-    // Key1 显示条件 (Telegram=5 或 钉钉=7)
-    bool showK1 = (tp == 5 || tp == 7);
+    // Key1 显示条件 (Telegram=5 或 钉钉=7 或 飞书群聊机器人=8)
+    bool showK1 = (tp == 5 || tp == 7 || tp == 8);
     html.replace("%CH" + idx + "_K1D%", showK1 ? "block" : "none");
     html.replace("%CH" + idx + "_K1L%", tp == 5 ? "Chat ID" : "加签密钥 (可选)");
     // 自定义模板显示条件 (type=4)

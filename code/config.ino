@@ -206,6 +206,7 @@ bool isPushChannelValid(const PushChannel& ch) {
     case PUSH_TYPE_CUSTOM:
     case PUSH_TYPE_WECOM:
     case PUSH_TYPE_DINGTALK:
+    case PUSH_TYPE_FEISHU:
       return ch.url.length() > 0;
     case PUSH_TYPE_TELEGRAM:
       // Telegram 需要 URL 和 chat_id (key1)

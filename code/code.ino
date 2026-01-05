@@ -169,6 +169,8 @@ void setup() {
   
   // 启动 HTTP 服务器
   server.on("/", handleRoot);
+  server.on("/common.css", handleCSS);
+  server.on("/common.js", handleJS);
   server.on("/save", HTTP_POST, handleSave);
   server.on("/tools", handleToolsPage);
   server.on("/sendsms", HTTP_POST, handleSendSms);
