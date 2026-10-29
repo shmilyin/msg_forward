@@ -44,7 +44,9 @@ String jsonEscape(const String& str) {
     else if (c == '\n') result += "\\n";
     else if (c == '\r') result += "\\r";
     else if (c == '\t') result += "\\t";
-    else result += c;
+    else if ((uint8_t)c < 0x20) {
+      char escaped[7]; snprintf(escaped, sizeof(escaped), "\\u%04x", (unsigned int)(uint8_t)c); result += escaped;
+    } else result += c;
   }
   return result;
 }
@@ -89,11 +91,18 @@ String hmacSha256Base64(const String& secret, const String& data) {
 // 发送 HTTP/HTTPS 请求的通用函数
 int sendHttpRequest(const String& url, const String& method, const String& contentType, const String& body) {
   HTTPClient http;
+  http.setConnectTimeout(2000);
+  http.setTimeout(2000);
+  http.setReuse(false);
+  WiFiClientSecure httpTls;
+  httpTls.setInsecure();
+  httpTls.setHandshakeTimeout(3);
+  httpTls.setConnectionTimeout(2000);
   
   // 判断是否为 HTTPS
   if (url.startsWith("https://")) {
     // 使用全局的 ssl_client（在 code.ino 中已设置 setInsecure）
-    http.begin(ssl_client, url);
+    http.begin(httpTls, url);
   } else {
     http.begin(url);
   }
@@ -113,8 +122,7 @@ int sendHttpRequest(const String& url, const String& method, const String& conte
     Serial.printf("HTTP响应码: %d\n", httpCode);
     // 所有 2xx 状态码都视为成功 (200 OK, 201 Created, 202 Accepted, 204 No Content 等)
     if (httpCode >= 200 && httpCode < 300) {
-      String response = http.getString();
-      Serial.println("响应: " + response.substring(0, 200));  // 限制输出长度
+      // 不下载响应正文：即便服务端返回巨量或无限正文，内存也不会随之增长。
       stats.pushSuccess++;
     } else {
       Serial.println("HTTP错误响应");
@@ -137,9 +145,12 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
   String channelName = channel.name.length() > 0 ? channel.name : ("通道" + String(channel.type));
   Serial.println("发送到推送通道: " + channelName);
   
-  String senderEscaped = jsonEscape(String(sender));
-  String messageEscaped = jsonEscape(String(message));
-  String timestampEscaped = jsonEscape(String(timestamp));
+  String senderEscaped, messageEscaped, timestampEscaped;
+  if (channel.type == PUSH_TYPE_POST_JSON || channel.type == PUSH_TYPE_BARK || channel.type == PUSH_TYPE_CUSTOM) {
+    senderEscaped = jsonEscape(String(sender));
+    messageEscaped = jsonEscape(String(message));
+    timestampEscaped = jsonEscape(String(timestamp));
+  }
   
   switch (channel.type) {
     case PUSH_TYPE_POST_JSON: {
@@ -272,6 +283,30 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       break;
     }
     
+    case PUSH_TYPE_FEISHU: {
+      String jsonData = "{";
+      if (channel.key1.length() > 0) {
+        time_t timestampSec = time(nullptr);
+        // 校时由WiFi连接后台启动；签名路径不等待NTP。
+        if (timestampSec < 100000) {
+          Serial.println("时间未同步，跳过本次飞书加签推送");
+          stats.pushFailed++;
+          return;
+        }
+        char timestampBuf[24];
+        snprintf(timestampBuf, sizeof(timestampBuf), "%llu", (unsigned long long)timestampSec);
+        String timestampStr = String(timestampBuf);
+        // 飞书以秒级时间戳、换行和密钥作HMAC密钥，消息为空。
+        String sign = hmacSha256Base64(timestampStr + "\n" + channel.key1, "");
+        jsonData += "\"timestamp\":\"" + jsonEscape(timestampStr) + "\",";
+        jsonData += "\"sign\":\"" + jsonEscape(sign) + "\",";
+      }
+      String content = "来自: " + String(sender) + "\n" + String(message) + "\n\n" + String(timestamp);
+      jsonData += "\"msg_type\":\"text\",\"content\":{\"text\":\"" + jsonEscape(content) + "\"}}";
+      sendHttpRequest(channel.url, "POST", "application/json", jsonData);
+      break;
+    }
+
     default:
       Serial.println("未知推送类型");
       return;
@@ -311,36 +346,155 @@ void sendSMSToServer(const char* sender, const char* message, const char* timest
   saveStats();
 }
 
-// 发送邮件通知函数
+// 有界通知队列。主循环每轮只发送一个HTTP通道；SMTP使用库的异步状态机。
+struct PendingNotification {
+  String sender, message, timestamp, subject, body;
+  unsigned long queuedAt = 0;
+  int channel = 0;
+  bool emailOnly = false;
+};
+static const unsigned int NOTIFICATION_CAPACITY = 8;
+static PendingNotification notifications[NOTIFICATION_CAPACITY];
+static unsigned int notificationHead = 0, notificationCount = 0;
+static unsigned long droppedNotifications = 0;
+static unsigned long mailStarted = 0;
+static int mailStage = 0;
+
+unsigned int notificationQueueDepth() { return notificationCount; }
+unsigned long notificationDropCount() { return droppedNotifications; }
+
+bool enqueueSmsNotification(const char* sender, const char* message, const char* timestamp) {
+  if (!sender || !message || !timestamp || strlen(sender) > 64 ||
+      strlen(message) > 4096 || strlen(timestamp) > 64 ||
+      notificationCount == NOTIFICATION_CAPACITY) {
+    droppedNotifications++;
+    Serial.println("通知队列已满或消息超限；短信历史保留，拒绝新通知");
+    return false;
+  }
+  PendingNotification& job = notifications[(notificationHead + notificationCount) % NOTIFICATION_CAPACITY];
+  job = PendingNotification();
+  job.sender = sender;
+  job.message = message;
+  job.timestamp = timestamp;
+  job.queuedAt = millis();
+  notificationCount++;
+  return true;
+}
+
 void sendEmailNotification(const char* subject, const char* body) {
   if (!config.emailEnabled) return;
-  
-  if (config.smtpServer.length() == 0 || config.smtpUser.length() == 0 || 
-      config.smtpPass.length() == 0 || config.smtpSendTo.length() == 0) {
-    Serial.println("邮件配置不完整，跳过发送");
+  if (!subject || !body || strlen(subject) > 256 || strlen(body) > 4608 ||
+      notificationCount == NOTIFICATION_CAPACITY) {
+    droppedNotifications++;
     return;
   }
-  
-  auto statusCallback = [](SMTPStatus status) {
-    Serial.println(status.text);
-  };
-  smtp.connect(config.smtpServer.c_str(), config.smtpPort, statusCallback);
-  if (smtp.isConnected()) {
-    smtp.authenticate(config.smtpUser.c_str(), config.smtpPass.c_str(), readymail_auth_password);
+  PendingNotification& job = notifications[(notificationHead + notificationCount) % NOTIFICATION_CAPACITY];
+  job = PendingNotification();
+  job.subject = subject;
+  job.body = body;
+  job.emailOnly = true;
+  job.channel = MAX_PUSH_CHANNELS;
+  job.queuedAt = millis();
+  notificationCount++;
+}
 
-    SMTPMessage msg;
-    String from = "sms notify <"; from += config.smtpUser; from += ">";
-    msg.headers.add(rfc822_from, from.c_str());
-    String to = "your_email <"; to += config.smtpSendTo; to += ">";
-    msg.headers.add(rfc822_to, to.c_str());
-    msg.headers.add(rfc822_subject, subject);
-    msg.text.body(body);
-    configTime(0, 0, "ntp.ntsc.ac.cn");
-    while (time(nullptr) < 100000) delay(100);
+void finishNotification() {
+  smtp.stop();
+  smtp.getMessage().clear();
+  ssl_client.stop();
+  mailStage = 0;
+  PendingNotification& completed = notifications[notificationHead];
+  completed.sender = (const char*)nullptr;
+  completed.message = (const char*)nullptr;
+  completed.timestamp = (const char*)nullptr;
+  completed.subject = (const char*)nullptr;
+  completed.body = (const char*)nullptr;
+  completed = PendingNotification();
+  notificationHead = (notificationHead + 1) % NOTIFICATION_CAPACITY;
+  notificationCount--;
+}
+
+void processNotifications() {
+  if (!notificationCount) return;
+  PendingNotification& job = notifications[notificationHead];
+  if ((unsigned long)(millis() - job.queuedAt) >= 300000) {
+    droppedNotifications++;
+    Serial.println("通知等待超过5分钟，释放队列槽位");
+    finishNotification();
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (mailStage) finishNotification();
+    return;
+  }
+  if (!job.emailOnly && job.channel < MAX_PUSH_CHANNELS) {
+    const PushChannel& channel = config.pushChannels[job.channel++];
+    if (isPushChannelValid(channel)) {
+      sendToChannel(channel, job.sender.c_str(), job.message.c_str(), job.timestamp.c_str());
+      saveStats();
+    }
+    return;
+  }
+  if (!config.emailEnabled || !config.smtpServer.length() || !config.smtpUser.length() ||
+      !config.smtpPass.length() || !config.smtpSendTo.length()) {
+    finishNotification();
+    return;
+  }
+  // 校时在连接WiFi时后台启动；不在邮件路径等待NTP。
+  if (time(nullptr) < 100000) {
+    Serial.println("时间未同步，跳过本次邮件");
+    stats.pushFailed++;
+    finishNotification();
+    return;
+  }
+  // 15秒是协作式轮询预算；同步TCP/TLS仍受底层超时约束，并非整个操作的绝对上限。
+  if (mailStage && ((unsigned long)(millis() - mailStarted) >= 15000 ||
+                    smtp.status().errorCode != 0)) {
+    Serial.println("邮件失败或轮询已达15秒预算，关闭连接");
+    stats.pushFailed++;
+    finishNotification();
+    return;
+  }
+  if (!mailStage) {
+    mailStarted = millis();
+    mailStage = 1;
+    if (!smtp.connect(config.smtpServer, config.smtpPort, nullptr, true, false)) {
+      stats.pushFailed++;
+      finishNotification();
+    }
+    return;
+  }
+  smtp.loop();
+  // ReadyMail的isConnected同时检查底层连接和server_greeting_ack，不只是TCP已连接。
+  if (mailStage == 1 && smtp.isConnected()) {
+    mailStage = 2;
+    if (!smtp.authenticate(config.smtpUser, config.smtpPass, readymail_auth_password, false)) {
+      stats.pushFailed++;
+      finishNotification();
+    }
+  } else if (mailStage == 2 && smtp.isAuthenticated()) {
+    if (!job.emailOnly) {
+      String code = extractVerifyCode(job.message);
+      job.subject = code.length() ? "[" + code + "] " + job.sender : job.sender + ": " + job.message.substring(0, 30);
+      job.body = "发送者: " + job.sender + "\n时间: " + job.timestamp + "\n内容:\n" + job.message;
+    }
+    // await=false保留消息引用，必须使用库拥有的内部消息。
+    SMTPMessage& msg = smtp.getMessage();
+    msg.clear();
+    msg.headers.add(rfc822_from, ("sms notify <" + config.smtpUser + ">").c_str());
+    msg.headers.add(rfc822_to, config.smtpSendTo.c_str());
+    msg.headers.add(rfc822_subject, job.subject.c_str());
+    msg.text.body(job.body.c_str());
     msg.timestamp = time(nullptr);
-    smtp.send(msg);
+    mailStage = 3;
+    if (!smtp.send(msg, "", false)) {
+      stats.pushFailed++;
+      finishNotification();
+    }
+  } else if (mailStage == 3 && smtp.status().isComplete) {
+    stats.pushSuccess++;
     Serial.println("邮件发送完成");
-  } else {
-    Serial.println("邮件服务器连接失败");
+    finishNotification();
+    saveStats();
   }
 }

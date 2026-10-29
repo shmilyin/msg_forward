@@ -22,5 +22,7 @@ void processSmsContent(const char* sender, const char* text, const char* timesta
 void checkSerial1URC();
 String readSerialLine(HardwareSerial& port);
 bool isHexString(const String& str);
+String readModemLine(bool prompt);
+bool dispatchModemURC(const String& line);
 
 #endif // SMS_HANDLER_H

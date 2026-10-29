@@ -1,342 +1,112 @@
 # 低成本短信转发器
 
-用低成本硬件实现短信自动转发，只需要提供供电和WiFi即可，收到短信后自动推送到手机/邮箱/智能家居，再也不怕错过验证码！
-虽然芯片标记的全网通，该项目可能不支持电信卡，使用电信卡会连不上网，具体请自测。
+ESP32-C3 通过 UART 接收 ML307R 短信，通过 WiFi 转发至邮件或 Webhook。保留验证码提取、最长10段短信合并、三个推送通道、多WiFi配置、历史和定时保号。
 
-> 本项目基于 [chenxuuu/sms_forwarding](https://github.com/chenxuuu/sms_forwarding/) 进行二次开发，原项目采用 MIT 协议。本项目保留原作者版权声明，并在此基础上增加/改动了功能。
-> 原项目固件的视频教程：[B站视频](https://www.bilibili.com/video/BV1cSmABYEiX),少部分不适用于当前修改版，大部分通用。
+本项目基于 [chenxuuu/sms_forwarding](https://github.com/chenxuuu/sms_forwarding/) 二次开发，保留 MIT 版权声明。界面及部分功能参考 [dushixiang/uart_sms_forwarder](https://github.com/dushixiang/uart_sms_forwarder)。
 
-> 部分功能及ui设计参考[dushixiang/uart_sms_forwarder.git](https://github.com/dushixiang/uart_sms_forwarder)，该项目不用焊接，支持全网通，但需要一个可以运行后台程序的设备，需要的也可以看下这个项目
+## 当前功能
 
+- 邮件、POST JSON、Bark、GET、自定义模板、Telegram、企业微信、钉钉及飞书群聊机器人；三个通道可同时配置。
+- HTTP Basic 认证的管理页面、短信历史、模组查询、短信发送和Ping保号。
+- 北京时间每日单个飞行时段，支持跨午夜、手动覆盖和恢复自动。
+- 8条短信PDU队列和8条通知队列、8192字节UART接收缓冲、4096字节PDU解析容量。
+- 通知队列单步处理HTTP通道；SMTP使用ReadyMail内部消息的异步状态机。
 
-**删除的功能：** PushPlus、Server酱（可用自定义 Webhook 替代）
+当前固件已删除 MQTT/Home Assistant、号码黑白名单和内容关键词过滤的源码、接口、页面及PubSubClient依赖。旧NVS键不再读写，未清空整个配置空间，WiFi、管理账号和推送配置继续保留。`homeassistant/`仅为legacy资料，当前固件不支持；外部Broker的retained实体不会自动删除。
 
-**主要改进：**
-- 重构代码结构，模块化设计
-- 新增 Telegram推送
-- 全新现代化 Web 界面
-- 完整的 MQTT 支持，可接入 Home Assistant，提供传感器配置和自动化蓝图
+## 每日飞行与手动规则
 
+在首页保存调度开关、开始和结束时间。时间为北京时间 UTC+8，系统UTC时钟不被修改。普通时段为开始时刻包含、结束时刻不包含；例如23:00至07:00会跨午夜，开始与结束相同拒绝保存。
 
+调度启用时，手动开启或关闭覆盖到下一次开始或结束边界；可以立即恢复自动。未校时允许手动操作，首次校时后确定覆盖截止时间。保存新规则清除覆盖。关闭调度保留当前有效目标为持久化手动目标。调度启用后重启清除临时覆盖，校时后恢复自动；调度关闭后重启重新回读并应用手动目标。已校时后断网继续使用本地时钟，时间跳变直接计算当前目标，不补做过期切换；失效覆盖不会因时间回拨重新出现。
 
-<img src="assets/homepage.png" width="600" />
+启动先查询CFUN；调度启用但未校时时只查询，不主动开启射频、不激活PDP或等待附着。软件不能保证ML307R上电默认射频关闭，必须在目标设备上验证。当前切换使用`AT+CFUN=4`和`AT+CFUN=1`，不用复位命令代替；对应模组固件支持情况尚待硬件确认。
 
-## 更新日志
+目标与实际状态独立展示。设置返回OK后必须回读CFUN匹配才确认状态。退出飞行后恢复`CMGF=0`、`CNMI=2,2,0,0,0`，再分别检查SIM、注册和附着。CFUN正常不代表蜂窝网络已就绪。未知、飞行、恢复或事务忙碌期间拒绝新蜂窝任务；已经开始的短信/Ping事务完整结束后再切换。保号到期最多保留一个待执行标记，恢复后执行一次，不补发多次或虚计成功。
 
-- ✨ 新增 Telegram Bot 推送
-- ✨ 新增企业微信机器人推送  
-- ✨ 新增钉钉机器人推送
-- ✨ 新增手动流量保号功能
-- ✨ 新增 mDNS 支持（可用 `http://sms.local` 访问）
-- ✨ 新增多 WiFi 配置（自动选择信号最强的网络）
-- ✨ 新增号码黑白名单过滤（支持模糊匹配，自动处理国家区号）
-- ✨ 新增内容关键词过滤（按关键词过滤/筛选短信）
-- ✨ 新增定时任务（定时Ping保活/定时发短信保号）
-- ✨ 新增设备状态 MQTT 上报（信号强度、APN等）
-- ✨ 新增自动 APN 识别（换卡自动适配）
-- 🎨 全新现代化 Web 界面，支持手机和电脑端
-- 🎨 概览页显示完整设备状态
-- 🐛 修复多处 bug，优化稳定性
+API均使用现有Basic认证：
 
+| 方法与路径 | 参数/用途 |
+|---|---|
+| GET `/airplane` | 调度、目标、实际CFUN、校时、覆盖截止、恢复、SIM/注册/附着及错误 |
+| POST `/airplane/save` | 表单`enabled=true或false`、`start=HH:MM`、`end=HH:MM`，完整验证后保存 |
+| POST `/airplane/action` | 表单`action=on/off/auto`，auto要求已开启调度 |
 
-## 功能特点
+新增修改接口严格拒绝缺失、重复、额外参数及非法布尔/时间。202表示已接受、等待模组确认，页面继续读取实际状态，不将接受请求显示成切换成功。系统配置和飞行规则分别保存。
 
-### 核心功能
-- 📱 收到短信自动转发到手机/邮箱
-- 🔔 支持多种推送方式同时启用
-- 🌐 网页配置，无需改代码
-- 📡 支持 MQTT，可接入 Home Assistant 智能家居
-- 📶 支持多WiFi配置，自动选择信号最强的网络
+## 管理页面和本地样式缓存
 
-### 过滤功能
-- 🚫 号码黑白名单过滤（支持模糊匹配，自动处理 +86 等区号）
-- 🔍 内容关键词过滤（按关键词拦截或筛选短信）
+恢复原版底部四个 Tab：概览、控制、历史、配置。概览显示计数和模组查询；控制包含飞行规则、手动覆盖、短信发送、流量保号和重启；历史按联系人展示聊天记录；配置使用折叠面板，保留三个推送通道。Tab 支持方向键、Home/End、Enter/空格和 `aria-selected`；默认概览，支持 `#overview`、`#control`、`#history-page`、`#config` 初始定位及 hash 切换。
 
-### 保号功能
-- ⏰ 定时 Ping 或发送短信保号，避免卡被销号回收
-- 🔋 手动流量保号（Ping 消耗少量流量）
+以 git `c95518a` 的 `web_pages.h`、`web_handlers.ino` 为界面基准，保留原 SVG、字号、间距、概览自动查询、配置开关与通道展开、历史联系人左右栏和手机返回；对照 `assets/homepage.png`，仅移除 MQTT/HA、关键词过滤和号码名单功能，并加入飞书与原卡片风格的每日飞行。原版 CSS 逐字保留，额外规则仅处理键盘焦点、长内容及语义按钮，不覆盖原版容器间距、字号或双列布局。样式保存在 Flash，由设备 GET `/assets/app.css?v=20261029-2` 分块发送，不依赖外网。匹配版本返回 `Cache-Control: public, max-age=31536000, immutable`；无版本或版本不符返回 `no-cache`，避免旧地址长期缓存新内容。修改 CSS 时同步更新 `APP_CSS_VERSION`；HTML 每次从设备认证读取，返回 `no-store`。样式资源公开只读且不包含配置、密码、Webhook 或密钥，JS 和全部 API 仍在本机。
 
-### 控制功能
-- 💬 网页/MQTT 发短信
-- 🔄 设备远程重启
-- 📊 实时状态监控（WiFi信号、4G信号、SIM卡状态）
+可选外部托管只建议放置纯静态 CSS，以固定版本 URL 发布；启用前需评估断网可用性并保留本地 fallback，外部请求不应带配置或凭据。当前未启用外部 URL、未发布远程资源，也无需额外构建常量。
 
-## 通知方式
+`python test_feishu.py` 会在 `build/ui-preview.html` 生成可双击的单文件离线预览，数据为宿主 mock 虚构数据，fetch 完全被本地桩替换，不读取设备也不会实际保存、发短信或通知；同时生成 `build/ui-desktop.png`、`build/ui-mobile.png`。浏览器回归使用独立 CSS 文件验证真实加载与计算样式，覆盖 320/390/600/768/1024/1440 视口，以及四 Tab、键盘/hash、历史安全文本/联系人切换/刷新/手机返回、WiFi/邮件/通道开关和全部推送类型显隐。测试直接比较指定提交的完整 CSS 与导航 SVG，并断言原版关键 DOM 和计算间距、字号，防止只保留相似配色。
 
-所有配置都在网页界面完成，支持同时开启多个：
+## 一键清理本机短信历史
 
-| 方式 | 说明 |
-|------|------|
-| **邮件** | 收到短信发邮件通知 |
-| **MQTT** | 接入智能家居（如 Home Assistant） |
-| **Bark** | iPhone 推送通知 |
-| **Telegram Bot** | Telegram 机器人推送 |
-| **企业微信** | 企业微信机器人 Webhook |
-| **钉钉** | 钉钉机器人 Webhook |
-| **自定义 Webhook** | 推送到任意服务器 |
+历史页右上角“清空全部”会先确认删除所有联系人的本机历史，确认后调用 Basic 认证的 `POST /history/clear`。其他 HTTP 方法返回 405，删除失败返回 500，成功返回 200 和 `success:true`。操作期间禁用按钮，完成/失败均提示；成功后直接重置联系人、聊天和选中状态，不刷新整页，并忽略清理前未完成的历史请求响应。
 
+清理只依次删除 SPIFFS 的 `/sms.tmp`、`/sms.bak`、`/sms.txt`；主文件最后删除，任一步失败即停止，避免旧备份在下次启动时恢复已清空历史。失败可能已删掉临时文件或备份，可重试；不会修改 NVS、配置、累计统计或其他文件，不会发送 AT 命令删除 SIM 短信，也不会发送通知。清空后新收到的短信仍正常记录。
 
-<img src="assets/email.png" width="400" />
+`test_storage.py` 使用实际存储和清理 handler，覆盖文件删除顺序、主/备/临时文件删除失败与恢复、仅备份存在、重复清理、认证/方法及其他文件与计数保持；`test_feishu.py` 的六种浏览器视口覆盖确认取消不请求、POST、操作禁用、失败提示、空态及旧响应防覆盖。验证不调用真实设备清理接口。
 
+## 稳定性和内存
 
-## 硬件准备
+保留此前的日期/分段边界校验、共享逐行UART读取、URC交错处理、整行终结判断、有界响应、WiFi重连、看门狗及诊断字段。AT事务覆盖CMGS提示至最终响应、Ping激活至清理、CFUN设置回读恢复和模组查询。AT等待仅入队PDU，不递归执行主循环和网络通知。超时后排空并用有专属正文的CFUN查询重同步，短信成功还要求`+CMGS`，Ping清理增加CGACT回读。通用AT协议没有请求ID，任意延迟、无上限的迟到响应无法获得数学上的归属保证，仍需实机故障注入。
 
-总成本约 **28元**：
+串口控制改为按行的只读查询白名单，避免原始透传破坏短信输入或绕过射频调度。支持AT、ATI、CFUN?、CPIN?、CEREG?、CGATT?；射频与短信操作使用认证页面。
 
-| 硬件 | 价格 | 链接 |
-|------|------|------|
-| ESP32C3 Super Mini | ¥9.5 | [淘宝](https://item.taobao.com/item.htm?id=852057780489&skuId=5813710390565) |
-| ML307R-DC 核心板 | ¥16.3 | [淘宝](https://item.taobao.com/item.htm?id=797466121802&skuId=5722077108045) |
-| 4G 天线 | ¥2 | 同上链接 |
+首页Flash模板单次扫描，1024字节分块，WiFi和推送卡片逐项输出；配置内容按128字节分块HTML转义，不重新解释其中占位符。历史使用100个文件偏移和2048字节限长缓冲逐条输出，不构造完整数组和包装副本。历史仅保存短信约200字节UTF-8完整字符预览，不可视为完整备份。裁剪使用512字节复制缓冲，检查剩余空间、写入长度、重开文件大小和rename结果；临时文件完成后先将旧文件改为备份，再提升新文件，启动时主文件缺失则恢复备份。SPIFFS本身不是事务文件系统，不能代替硬件掉电验证。
 
-## 接线方式
-#### 注意，rx和tx的针脚和 GPIO3  GPIO4不是垂直对应,要掰弯针脚，我是建议买焊接好的esp32c3，然后使用杜邦线连接，然后ML307R的 EN 要和 5V(VCC) 连接,否则无法正常运行
+通知槽、PDU队列和长短信槽使用`String=(const char*)nullptr`触发Core3.3.0的`invalidate()`，实际释放容量；空字符串和空String移动赋值会复用原容量。SMTP消息保持库内部所有权，停止后再清理；减少不使用JSON通道的转义副本。
 
-| 接线示意图 | 实物连接图 |
-|:---:|:---:|
-| <img src="assets/connect.png" width="400" /> | <img src="assets/shiwu.png" width="400" /> |
+HTTP连接/读取2秒、TLS握手3秒；SMTP15秒为步骤间预算，无法抢占底层同步TCP/TLS调用。队列满时拒绝新通知并计数，5分钟过期释放，无自动重发和断电持久化。HTTP2xx按传输成功统计，未解析渠道业务错误码。HTTPS仍跳过证书验证。
 
+## 构建与离线验证
 
-简单说就是：
-- ESP32 的 **GPIO3** 接 ML307 的 **RX**
-- ESP32 的 **GPIO4** 接 ML307 的 **TX**
-- **GND** 接 **GND**
-- **5V** 接 **VCC** 和 **EN**（让模块自动开机）
+锁定Arduino CLI1.2.2、ESP32 Core3.3.0、ReadyMail0.4.2、pdulib0.5.11，见`toolchain-lock.json`。项目内工具位于`.tools/`和`.arduino/`。
 
-## 烧录步骤
-
-### 1. 安装 Arduino IDE
-
-下载安装 [Arduino IDE](https://www.arduino.cc/en/software)
-
-### 2. 添加 ESP32 支持
-
-1. 打开 Arduino IDE，点击 **文件 → 首选项**
-2. 在"附加开发板管理器网址"填入：
-```
-   https://espressif.github.io/arduino-esp32/package_esp32_index.json
-   ```
-3. 点击 **工具 → 开发板 → 开发板管理器**
-4. 搜索 `esp32`，安装 **esp32 by Espressif Systems**
-
-### 3. 安装依赖库
-
-点击 **工具 → 管理库**，搜索并安装：
-- **ReadyMail** by Mobizt
-- **pdulib** by David Henry
-- **PubSubClient** by Nick O'Leary
-
-### 4. 配置 WiFi
-
-打开 `code/wifi_config.h`，修改成你的 WiFi：
-
-```cpp
-#define WIFI_SSID "你的WiFi名"
-#define WIFI_PASS "你的WiFi密码"
-   ```
-
-### 5. 上传程序
-
-1. 用 USB 线连接 ESP32C3 到电脑
-2. 选择开发板：**工具 → 开发板 → esp32 → MakerGO ESP32 C3 SuperMini**
-3. 更改存储分配：**工具 → Partition Scheme:xxxx → Huge app**
-4. 选择端口：**工具 → 端口 → （选择出现的COM口）**
-5. 点击上传按钮 ➡️
-
-### 6. 开始使用
-
-1. 插入 SIM 卡到 ML307 模块
-2. 用 USB 给 ESP32 供电
-3. 打开手机连接同一个 WiFi
-4. 浏览器访问：
-   - **推荐**：`http://sms.local`（无需记 IP，支持 Windows/macOS/iOS）
-   - 或访问 ESP32 的 IP 地址（串口会打印）
-5. 默认账号密码：`admin` / `admin123`
-6. 在网页配置你想要的推送方式
-
-> 💡 **mDNS 说明**：设备支持 mDNS，可以用 `sms.local` 域名访问。Android 系统可能不支持，需使用 IP 地址。
-
-## 推送渠道配置
-
-### Telegram Bot
-
-1. 在 Telegram 找 @BotFather 创建机器人，获取 Token
-2. URL 填写：`https://api.telegram.org/bot<你的Token>/sendMessage`
-3. Chat ID 填写你的 Telegram 用户 ID（可以用 @userinfobot 获取）
-
-### 企业微信机器人
-
-1. 在企业微信群里添加机器人，获取 Webhook URL
-2. URL 填写完整的 Webhook 地址
-
-### 钉钉机器人
-
-1. 在钉钉群设置中添加自定义机器人
-2. 安全设置可以选择：
-   - **自定义关键词**：消息内容需包含该关键词（推荐设置为"来自"）
-   - **加签**：需要在配置页面填写加签密钥（Key1 字段）
-   - **IP 地址段**：添加你服务器的公网 IP
-3. URL 填写完整的 Webhook 地址
-4. 如果选择了加签，在 Key1 字段填写加签密钥（以 SEC 开头）
-
-## 过滤功能
-
-支持两种过滤方式，可单独或同时启用：
-
-### 号码过滤（黑白名单）
-
-按发送者号码过滤短信，支持两种模式：
-
-| 模式 | 说明 | 使用场景 |
-|------|------|----------|
-| **黑名单** | 拦截列表中的号码 | 屏蔽骚扰号码 |
-| **仅白名单** | 只接收列表中的号码 | 只接收特定号码 |
-
-**智能匹配**：支持模糊匹配，自动处理国家区号
-- 输入 `13800138000`，可匹配 `+8613800138000`、`8613800138000` 等格式
-- 输入 `10086`，可匹配 `+8610086` 等格式
-
-### 内容关键词过滤
-
-按短信内容中的关键词过滤，支持两种模式：
-
-| 模式 | 说明 | 使用场景 |
-|------|------|----------|
-| **黑名单** | 拦截包含关键词的短信 | 过滤广告、营销短信 |
-| **仅白名单** | 只转发包含关键词的短信 | 只接收验证码等重要短信 |
-
-**使用示例**：
-
-```
-# 黑名单模式 - 过滤广告
-推广,优惠,促销,贷款,办卡,兼职
-
-# 白名单模式 - 只接收重要短信  
-验证码,校验码,动态密码,快递,银行
+```bash
+python build.py setup
+python build.py host
+python test_modem.py
+python test_notifications.py
+python test_feishu.py
+python test_airplane.py
+python test_airplane_device.py
+python test_storage.py
+python build.py compile
 ```
 
-> 💡 关键词匹配不区分大小写，多个关键词用逗号分隔。
+已有工具链时无需执行setup。目标`esp32:esp32:esp32c3:PartitionScheme=huge_app`，产物`build/esp32c3/`，构建日志`build/compile.log`。测试提取实际固件函数，以宿主串口、时钟、网络、SMTP和文件系统mock运行，不烧录、不发送真实通知。
 
-## MQTT 功能（接入智能家居）
+新增测试覆盖所有分钟的普通/跨午夜边界、未校时/首次校时、重启、手动覆盖、时间跳变、CFUN错误/回读不符/未知、CNMI恢复失败、事务互斥、认证/重复/非法参数、迟到OK重同步及历史裁剪写入/空间/提升失败恢复。原通知压力测试运行10万轮、20万任务，验证宿主分配净增长；该结果不等于ESP32真实堆测试。
 
-如果你用 Home Assistant 或其他智能家居平台，可以通过 MQTT 实现：
+内存历史参考基线为静态49448字节、freeHeap142888、minHeap65552、largestBlock114676。当前编译尺寸见当天项目日志。首页峰值降低25KiB、最低堆提升16KiB、队列填满排空100轮后净差不超过2KiB等目标需要相同设备、配置和负载实测，当前不能宣称达标。历史应用层缓冲为2048字节加400字节偏移，裁剪复制缓冲512字节，均与记录总量无关。
 
-- 📥 收到短信自动推送到 HA
-- 📤 通过 HA 远程发短信
-- 📊 在 HA 显示信号强度、在线状态
-</br></br>效果如下</br>
-<img src="assets/hahome.png" width="400" />
+## 飞书
 
-### 配置方法
+通道选择飞书（type=8），填写Webhook和可选签名密钥。签名使用秒级时间戳，以`timestamp + '\n' + secret`为HMAC-SHA256 key、空字符串为message，再Base64；timestamp/sign放POST JSON顶层。未校时立即跳过加签并计失败，不等待NTP、不自动重试。飞书路径不输出Webhook、密钥或签名请求体。机器人自身关键词校验仍须满足。
 
-1. 在网页界面展开"MQTT"
-2. 填入你的 MQTT 服务器信息
-3. 勾选启用，保存
+## 硬件和使用
 
-### MQTT 主题说明
+ESP32-C3 Super Mini配ML307R-DC，GPIO3接ML307 RX、GPIO4接ML307 TX，GND共地，ML307 VCC/EN接合适的5V供电并安装天线。部分SIM/运营商兼容性需要自测。修改`code/wifi_config.h`默认WiFi；首次访问`sms.local`或串口显示的IP，默认账号`admin`、密码`admin123`，及时修改管理密码。网页可保存三个WiFi，变更后需重启。
 
-设备会用 MAC 地址后6位作为 ID，比如设备 ID 是 `a1b2c3`，主题前缀是 `sms`：
+本轮未烧录或测试硬件。后续在设备上确认CFUN=4支持、上电射频默认行为、跨日/跨午夜、退出飞行后SIM注册/短信恢复，以及供电和Flash掉电恢复；再进行72小时故障注入及7天观察。断网/恢复WiFi、阻断NTP、延迟HTTP和AT响应、在Ping及短信发送期间接收短信，核对计数、队列、复位原因、恢复耗时和堆趋势。
 
-**设备上报的主题：**
-| 主题 | 说明 |
-|------|------|
-| `sms/a1b2c3/status` | 设备状态（每60秒更新） |
-| `sms/a1b2c3/sms/received` | 收到的短信内容 |
+每分钟输出`health`，认证后的`/stats`包含`minHeap`、`largestBlock`、`maxLoopMs`、队列深度、丢弃计数和复位原因。验收要求无意外复位、主循环和通知可恢复、预热后堆和最大连续块没有下降趋势。UART8192字节不保证任意突发流量绝不丢失。
 
-**发送命令到设备：**
-| 主题 | 消息 | 说明 |
-|------|------|------|
-| `sms/a1b2c3/sms/send` | `{"phone":"138xxx","message":"内容"}` | 发短信 |
-| `sms/a1b2c3/ping` | `{}` | 执行 Ping 测试 |
-| `sms/a1b2c3/cmd` | `{"action":"restart"}` | 重启设备 |
+## 文件
 
-### 状态信息
-
-设备每60秒上报一次状态，包含：
-
-```json
-{
-  "status": "online",
-  "ip": "192.168.1.100",
-  "wifi_rssi": -45,
-  "wifi_status": "极好",
-  "lte_rsrp": -85,
-  "lte_status": "良好",
-  "apn": "GIFFGAFF.COM"
-}
-```
-
-| 字段 | 说明 |
-|------|------|
-| `status` | 在线/离线 |
-| `wifi_rssi` | WiFi 信号强度 (dBm) |
-| `wifi_status` | WiFi 信号评价（极好/很好/良好/一般/较弱/很差） |
-| `lte_rsrp` | 4G 信号强度 (dBm) |
-| `lte_status` | 4G 信号评价（极好/良好/一般/较弱/很差） |
-| `apn` | 当前 APN |
-
-### Home Assistant 配置示例
-
-
-在 `configuration.yaml` 添加：
-
-```yaml
-mqtt:
-  sensor:
-    - name: "短信转发器"
-      state_topic: "sms/a1b2c3/status"
-      value_template: "{{ value_json.status }}"
-      
-    - name: "4G信号强度"
-      state_topic: "sms/a1b2c3/status"
-      value_template: "{{ value_json.lte_rsrp }} dBm ({{ value_json.lte_status }})"
-```
-
-### 仅控制模式
-
-如果你用的是公共 MQTT 服务器，担心短信内容泄露，可以勾选"仅控制模式"：
-- ✅ 可以远程发短信、Ping、重启
-- ✅ 会上报设备状态
-- ❌ 不会上传收到的短信内容
-
-## 常见问题
-
-**Q: 提示检测不到AT?**
-- 是否有接好5v和en
-- 检查esp32和ML307的连接
-
-**Q: 提示检测CGATT 附着?**
-- 检查4G天线插好没
-
-**Q: 收不到短信？**
-- 检查 SIM 卡是否正确插入
-- 检查天线是否连接
-- 在串口看有没有 +CMTI 提示
-
-**Q: 网页打不开？**
-- 检查 ESP32 和手机是否在同一个 WiFi
-- 在串口查看 ESP32 的 IP 地址
-
-**Q: MQTT 连不上？**
-- 检查服务器地址和端口
-- 检查用户名密码是否正确
-- 确认服务器允许你的 IP 连接
-
-## 文件说明
-
-```
-code/
-├── code.ino              # 主程序
-├── wifi_config.h         # WiFi 配置（需要修改）
-├── config.h/.ino         # 配置管理
-├── web_pages.h           # 网页界面
-├── web_handlers.h/.ino   # 网页处理
-├── web_query.ino         # Ping 查询
-├── sms_handler.h/.ino    # 短信处理
-├── push_service.h/.ino   # 推送服务
-└── mqtt_handler.h/.ino   # MQTT 功能
-```
-
+- `code/code.ino`：启动和主循环。
+- `code/config.h/.ino`：配置、统计和历史存储。
+- `code/airplane_mode.h/.ino`：每日调度、飞行状态机和认证接口。
+- `code/web_handlers.h/.ino`、`web_pages.h`、`web_query.ino`：页面与AT事务。
+- `code/sms_handler.h/.ino`：短信接收、发送与合并。
+- `code/push_service.h/.ino`：HTTP/邮件/飞书及通知队列。
+- `homeassistant/`：legacy归档。
 
 ## License
 

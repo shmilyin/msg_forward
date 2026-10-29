@@ -10,5 +10,9 @@ String jsonEscape(const String& str);
 void sendToChannel(const PushChannel& channel, const char* sender, const char* message, const char* timestamp);
 void sendSMSToServer(const char* sender, const char* message, const char* timestamp);
 void sendEmailNotification(const char* subject, const char* body);
+bool enqueueSmsNotification(const char* sender, const char* message, const char* timestamp);
+void processNotifications();
+unsigned int notificationQueueDepth();
+unsigned long notificationDropCount();
 
 #endif // PUSH_SERVICE_H

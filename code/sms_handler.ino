@@ -62,6 +62,14 @@ String formatTimestamp(const String& pduTimestamp) {
   int minute = pduTimestamp.substring(8, 10).toInt();
   int second = pduTimestamp.substring(10, 12).toInt();
   
+  for (unsigned int i = 0; i < 12; i++) {
+    if (pduTimestamp[i] < '0' || pduTimestamp[i] > '9') return pduTimestamp;
+  }
+  int monthDays[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) monthDays[2] = 29;
+  if (month < 1 || month > 12 || day < 1 || day > monthDays[month] ||
+      hour > 23 || minute > 59 || second > 59) return pduTimestamp;
+
   // 解析时区偏移（最后两位，以15分钟为单位，可能带符号）
   // PDU 时区格式：正数表示 UTC+，负数表示 UTC-
   int tzOffset = 0;
@@ -102,6 +110,7 @@ String formatTimestamp(const String& pduTimestamp) {
     if (day < 1) {
       month--;
       if (month < 1) { month = 12; year--; }
+      daysInMonth[2] = ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) ? 29 : 28;
       day = daysInMonth[month];
     } else if (day > daysInMonth[month]) {
       day = 1;
@@ -114,7 +123,7 @@ String formatTimestamp(const String& pduTimestamp) {
   }
   
   // 格式化输出
-  char buf[20];
+  char buf[80];
   snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second);
   return String(buf);
 }
@@ -122,7 +131,7 @@ String formatTimestamp(const String& pduTimestamp) {
 // 提取验证码（用于邮件主题）
 String extractVerifyCode(const String& text) {
   // 查找4-8位连续数字
-  String code = "";
+  String code = (const char*)nullptr;
   for (unsigned int i = 0; i < text.length(); i++) {
     char c = text.charAt(i);
     if (c >= '0' && c <= '9') {
@@ -130,7 +139,7 @@ String extractVerifyCode(const String& text) {
     } else if (code.length() >= 4 && code.length() <= 8) {
       break;  // 找到了有效验证码
     } else {
-      code = "";  // 重新开始
+      code = (const char*)nullptr;  // 重新开始
     }
   }
   // 最后检查
@@ -147,18 +156,20 @@ void initConcatBuffer() {
     concatBuffer[i].receivedParts = 0;
     for (int j = 0; j < MAX_CONCAT_PARTS; j++) {
       concatBuffer[i].parts[j].valid = false;
-      concatBuffer[i].parts[j].text = "";
+      concatBuffer[i].parts[j].text = (const char*)nullptr;
     }
   }
 }
 
 // 查找或创建长短信缓存槽位
 int findOrCreateConcatSlot(int refNumber, const char* sender, int totalParts) {
+  if (!sender || totalParts < 2 || totalParts > MAX_CONCAT_PARTS) return -1;
   // 先查找是否已存在
   for (int i = 0; i < MAX_CONCAT_MESSAGES; i++) {
     if (concatBuffer[i].inUse && 
         concatBuffer[i].refNumber == refNumber &&
         concatBuffer[i].sender.equals(sender)) {
+      if (concatBuffer[i].totalParts != totalParts) return -1;
       return i;
     }
   }
@@ -171,10 +182,11 @@ int findOrCreateConcatSlot(int refNumber, const char* sender, int totalParts) {
       concatBuffer[i].sender = String(sender);
       concatBuffer[i].totalParts = totalParts;
       concatBuffer[i].receivedParts = 0;
+      concatBuffer[i].timestamp = (const char*)nullptr;
       concatBuffer[i].firstPartTime = millis();
       for (int j = 0; j < MAX_CONCAT_PARTS; j++) {
         concatBuffer[i].parts[j].valid = false;
-        concatBuffer[i].parts[j].text = "";
+        concatBuffer[i].parts[j].text = (const char*)nullptr;
       }
       return i;
     }
@@ -182,10 +194,12 @@ int findOrCreateConcatSlot(int refNumber, const char* sender, int totalParts) {
   
   // 没有空闲槽位，查找最老的槽位覆盖
   int oldestSlot = 0;
-  unsigned long oldestTime = concatBuffer[0].firstPartTime;
+  unsigned long now = millis();
+  unsigned long oldestAge = now - concatBuffer[0].firstPartTime;
   for (int i = 1; i < MAX_CONCAT_MESSAGES; i++) {
-    if (concatBuffer[i].firstPartTime < oldestTime) {
-      oldestTime = concatBuffer[i].firstPartTime;
+    unsigned long age = now - concatBuffer[i].firstPartTime;
+    if (age > oldestAge) {
+      oldestAge = age;
       oldestSlot = i;
     }
   }
@@ -197,17 +211,20 @@ int findOrCreateConcatSlot(int refNumber, const char* sender, int totalParts) {
   concatBuffer[oldestSlot].sender = String(sender);
   concatBuffer[oldestSlot].totalParts = totalParts;
   concatBuffer[oldestSlot].receivedParts = 0;
+  concatBuffer[oldestSlot].timestamp = (const char*)nullptr;
   concatBuffer[oldestSlot].firstPartTime = millis();
   for (int j = 0; j < MAX_CONCAT_PARTS; j++) {
     concatBuffer[oldestSlot].parts[j].valid = false;
-    concatBuffer[oldestSlot].parts[j].text = "";
+    concatBuffer[oldestSlot].parts[j].text = (const char*)nullptr;
   }
   return oldestSlot;
 }
 
 // 合并长短信各分段
 String assembleConcatSms(int slot) {
-  String result = "";
+  if (slot < 0 || slot >= MAX_CONCAT_MESSAGES || !concatBuffer[slot].inUse ||
+      concatBuffer[slot].totalParts < 2 || concatBuffer[slot].totalParts > MAX_CONCAT_PARTS) return "";
+  String result = (const char*)nullptr;
   for (int i = 0; i < concatBuffer[slot].totalParts; i++) {
     if (concatBuffer[slot].parts[i].valid) {
       result += concatBuffer[slot].parts[i].text;
@@ -220,13 +237,14 @@ String assembleConcatSms(int slot) {
 
 // 清空长短信槽位
 void clearConcatSlot(int slot) {
+  if (slot < 0 || slot >= MAX_CONCAT_MESSAGES) return;
   concatBuffer[slot].inUse = false;
   concatBuffer[slot].receivedParts = 0;
-  concatBuffer[slot].sender = "";
-  concatBuffer[slot].timestamp = "";
+  concatBuffer[slot].sender = (const char*)nullptr;
+  concatBuffer[slot].timestamp = (const char*)nullptr;
   for (int j = 0; j < MAX_CONCAT_PARTS; j++) {
     concatBuffer[slot].parts[j].valid = false;
-    concatBuffer[slot].parts[j].text = "";
+    concatBuffer[slot].parts[j].text = (const char*)nullptr;
   }
 }
 
@@ -259,6 +277,9 @@ void checkConcatTimeout() {
 
 // 发送短信（PDU 模式）
 bool sendSMS(const char* phoneNumber, const char* message) {
+  if (!phoneNumber || !message || !cellularReady()) return false;
+  ATTransaction transaction;
+  if (!transaction) return false;
   Serial.println("准备发送短信...");
   Serial.print("目标号码: "); Serial.println(phoneNumber);
   Serial.print("短信内容: "); Serial.println(message);
@@ -280,52 +301,18 @@ bool sendSMS(const char* phoneNumber, const char* message) {
   String cmgsCmd = "AT+CMGS=";
   cmgsCmd += pduLen;
   
-  while (Serial1.available()) Serial1.read();
-  Serial1.println(cmgsCmd);
-  
-  // 等待 > 提示符
-  unsigned long start = millis();
-  bool gotPrompt = false;
-  while (millis() - start < 5000) {
-    if (Serial1.available()) {
-      char c = Serial1.read();
-      Serial.print(c);
-      if (c == '>') {
-        gotPrompt = true;
-        break;
-      }
-    }
-  }
-  
-  if (!gotPrompt) {
-    Serial.println("未收到>提示符");
+  // 独立保存编码结果，后续接收短信不能覆盖发送缓冲区。
+  String outgoingPdu = String(pdu.getSMS());
+  if (outgoingPdu.length() == 0 || outgoingPdu.length() >= SERIAL_BUFFER_SIZE) return false;
+  String prompt = transactionATCommand(cmgsCmd.c_str(), 5000);
+  if (prompt.indexOf("\n>\n") < 0) {
+    Serial1.write(0x1B);  // 超时退出输入模式，保留接收缓冲区。
     return false;
   }
-  
-  // 发送 PDU 数据
-  Serial1.print(pdu.getSMS());
-  Serial1.write(0x1A);  // Ctrl+Z 结束
-  
-  // 等待响应
-  start = millis();
-  String resp = "";
-  while (millis() - start < 30000) {
-    while (Serial1.available()) {
-      char c = Serial1.read();
-      resp += c;
-      Serial.print(c);
-      if (resp.indexOf("OK") >= 0) {
-        Serial.println("\n短信发送成功");
-        return true;
-      }
-      if (resp.indexOf("ERROR") >= 0) {
-        Serial.println("\n短信发送失败");
-        return false;
-      }
-    }
-  }
-  Serial.println("短信发送超时");
-  return false;
+  Serial1.print(outgoingPdu);
+  Serial1.write(0x1A);
+  String sent = waitATResponse(10000, false, false);
+  return atResponseOK(sent) && sent.indexOf("\n+CMGS:") >= 0;
 }
 
 // 处理最终的短信内容（管理员命令检查和转发）
@@ -342,66 +329,73 @@ void processSmsContent(const char* sender, const char* text, const char* timesta
   // 添加到短信历史
   addSmsToHistory(sender, cleanedText.c_str(), formattedTime.c_str());
   
-  // 检查号码过滤（黑白名单）
-  if (isNumberFiltered(sender)) {
-    Serial.println("号码被过滤，跳过推送");
-    return;
-  }
-  
-  // 检查内容关键词过滤
-  if (isContentFiltered(cleanedText.c_str())) {
-    Serial.println("内容被关键词过滤，跳过推送");
-    return;
-  }
-  
   if (verifyCode.length() > 0) {
     Serial.printf("验证码: %s\n", verifyCode.c_str());
   }
 
-  // 发送通知 http
-  sendSMSToServer(sender, cleanedText.c_str(), formattedTime.c_str());
+  // 网络通知排队，串口接收路径不做HTTP/SMTP等待。
+  enqueueSmsNotification(sender, cleanedText.c_str(), formattedTime.c_str());
   
-  // 发送 MQTT 通知
-  publishMqttSmsReceived(sender, cleanedText.c_str(), formattedTime.c_str());
-  
-  // 发送通知邮件
-  String subject;
-  if (verifyCode.length() > 0) {
-    subject = "[" + verifyCode + "] " + String(sender);
-  } else {
-    String preview = cleanedText.substring(0, 30);
-    if (cleanedText.length() > 30) preview += "...";
-    subject = String(sender) + ": " + preview;
-  }
-  
-  String body = "发送者: " + String(sender) + "\n";
-  body += "时间: " + formattedTime + "\n";
-  body += "内容:\n" + cleanedText;
-  
-  sendEmailNotification(subject.c_str(), body.c_str());
+  // 邮件与HTTP共用同一个队列任务，避免重复入队。
 }
 
 
-// 读取串口一行（含回车换行），返回行字符串，无新行时返回空
-String readSerialLine(HardwareSerial& port) {
+// 分批读取，超长行整行丢弃，不能把尾部误认成OK或PDU。
+String readModemLine(bool prompt) {
   static char lineBuf[SERIAL_BUFFER_SIZE];
-  static int linePos = 0;
-
-  while (port.available()) {
-    char c = port.read();
+  static unsigned int linePos = 0;
+  static bool overflow = false;
+  for (int count = 0; count < 64 && Serial1.available(); count++) {
+    int value = Serial1.read();
+    if (value < 0) break;
+    char c = (char)value;
+    if (prompt && c == '>' && linePos == 0 && !overflow) return ">";
     if (c == '\n') {
       lineBuf[linePos] = 0;
-      String res = String(lineBuf);
+      String line = overflow ? String("") : String(lineBuf);
       linePos = 0;
-      return res;
-    } else if (c != '\r') {  // 跳过 \r
-      if (linePos < SERIAL_BUFFER_SIZE - 1)
-        lineBuf[linePos++] = c;
-      else
-        linePos = 0;  // 超长报错保护，重头计
+      overflow = false;
+      line.trim();
+      return line;
+    }
+    if (c != '\r' && !overflow) {
+      if (linePos < sizeof(lineBuf) - 1) lineBuf[linePos++] = c;
+      else overflow = true;
     }
   }
+  yield();
   return "";
+}
+
+String readSerialLine(HardwareSerial& port) {
+  if (&port != &Serial1) return "";
+  return readModemLine(false);
+}
+
+static const unsigned int SMS_PDU_QUEUE_SIZE = 8;
+static String smsPduQueue[SMS_PDU_QUEUE_SIZE];
+static unsigned int smsPduHead = 0, smsPduCount = 0;
+static bool waitingSmsPdu = false;
+static unsigned long smsPduStart = 0;
+
+bool dispatchModemURC(const String& line) {
+  if (waitingSmsPdu && (unsigned long)(millis() - smsPduStart) >= 5000) waitingSmsPdu = false;
+  if (line.startsWith("+CMT:")) {
+    waitingSmsPdu = true;
+    smsPduStart = millis();
+    return true;
+  }
+  if (waitingSmsPdu && line.length() && line.length() % 2 == 0 && isHexString(line)) {
+    waitingSmsPdu = false;
+    if (smsPduCount < SMS_PDU_QUEUE_SIZE) {
+      smsPduQueue[(smsPduHead + smsPduCount) % SMS_PDU_QUEUE_SIZE] = line;
+      smsPduCount++;
+    } else {
+      Serial.println("短信PDU队列已满，丢弃新到PDU");
+    }
+    return true;
+  }
+  return false;
 }
 
 // 检查字符串是否为有效的十六进制 PDU 数据
@@ -418,30 +412,20 @@ bool isHexString(const String& str) {
 
 // 处理 URC 和 PDU
 void checkSerial1URC() {
-  static enum { IDLE,
-                WAIT_PDU } state = IDLE;
-
-  String line = readSerialLine(Serial1);
-  if (line.length() == 0) return;
-
-  // 打印到调试串口
-  Serial.println("Debug> " + line);
-
-  if (state == IDLE) {
-    
-    // 检测到短信上报 URC 头
-    if (line.startsWith("+CMT:")) {
-      Serial.println("检测到+CMT，等待PDU数据...");
-      state = WAIT_PDU;
-    }
-  } else if (state == WAIT_PDU) {
-    // 跳过空行
-    if (line.length() == 0) {
-      return;
-    }
-    
-    // 如果是十六进制字符串，认为是 PDU 数据
-    if (isHexString(line)) {
+  unsigned long start = millis();
+  for (int i = 0; i < 32 && Serial1.available() &&
+       (unsigned long)(millis() - start) < 10; i++) {
+    String incoming = readModemLine(false);
+    if (incoming.length()) dispatchModemURC(incoming);
+    yield();
+  }
+  // 每轮最多处理一条，AT等待只入队，绝不调用processSmsContent。
+  if (!smsPduCount) return;
+  String line = smsPduQueue[smsPduHead];
+  smsPduQueue[smsPduHead] = (const char*)nullptr;
+  smsPduHead = (smsPduHead + 1) % SMS_PDU_QUEUE_SIZE;
+  smsPduCount--;
+  {
       Serial.println("收到PDU数据: " + line);
       Serial.println("PDU长度: " + String(line.length()) + " 字符");
       
@@ -457,6 +441,7 @@ void checkSerial1URC() {
         
         // 获取长短信信息
         int* concatInfo = pdu.getConcatInfo();
+        if (!concatInfo) return;
         int refNumber = concatInfo[0];
         int partNumber = concatInfo[1];
         int totalParts = concatInfo[2];
@@ -464,13 +449,20 @@ void checkSerial1URC() {
         Serial.printf("长短信信息: 参考号=%d, 当前=%d, 总计=%d\n", refNumber, partNumber, totalParts);
         Serial.println("===============");
 
+        if (totalParts < 0 || totalParts > MAX_CONCAT_PARTS || partNumber < 0 ||
+            (totalParts <= 1 && partNumber > 1) ||
+            (totalParts > 1 && (partNumber < 1 || partNumber > totalParts))) {
+          Serial.println("短信分段参数无效，丢弃");
+          return;
+        }
         // 判断是否为长短信
-        if (totalParts > 1 && partNumber > 0) {
+        if (totalParts > 1) {
           // 这是长短信的一部分
           Serial.printf("收到长短信分段 %d/%d\n", partNumber, totalParts);
           
           // 查找或创建缓存槽位
           int slot = findOrCreateConcatSlot(refNumber, pdu.getSender(), totalParts);
+          if (slot < 0 || slot >= MAX_CONCAT_MESSAGES) return;
           
           // 存储该分段（partNumber 从 1 开始，数组从 0 开始）
           int partIndex = partNumber - 1;
@@ -515,13 +507,5 @@ void checkSerial1URC() {
         }
       }
       
-      // 返回 IDLE 状态
-      state = IDLE;
-    } 
-    // 如果是其他内容（OK、ERROR 等），也返回 IDLE
-    else {
-      Serial.println("收到非PDU数据，返回IDLE状态");
-      state = IDLE;
-    }
   }
 }

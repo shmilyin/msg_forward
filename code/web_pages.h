@@ -1,8 +1,7 @@
 #ifndef WEB_PAGES_H
 #define WEB_PAGES_H
-
-// 現代化 CSS 设计
-const char* commonCss = R"(<style>
+#define APP_CSS_VERSION "20261029-3"
+const char commonCss[] PROGMEM = R"CSS(
 :root{--primary:#6366f1;--primary-dark:#4f46e5;--bg:#f8fafc;--card:#ffffff;--text:#334155;--text-light:#64748b;--border:#e2e8f0;--success:#22c55e;--danger:#ef4444;--warning:#eab308;--info:#3b82f6}
 *{box-sizing:border-box;margin:0;padding:0;outline:none;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;padding:12px 12px 70px}
@@ -125,43 +124,59 @@ details[open] summary{border-bottom:1px solid var(--border)}
   .chat-back:active{background:#f1f5f9}
   .contact-item.active{background:transparent} /* 移动端取消列表选中高亮 */
 }
-</style>
-<script>
-const $=id=>document.getElementById(id);
-const $s=sel=>document.querySelector(sel);
-const postJ=(u,d,cb)=>{
-  fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
-  .then(r=>r.json()).then(cb).catch(e=>toast('请求失败: '+e))
-};
-let toastTimer;
-function toast(msg){
-  let t=$('toast');t.innerText=msg;t.className='toast show';
-  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='toast',2000);
-}
-</script>)";
 
-// 统一 JS
-const char* commonJs = "";
-
-// 完整的 HTML
-const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=0"><title>短信转发器</title>
-%COMMON_CSS%
+[hidden]{display:none!important}
+button{font:inherit;cursor:pointer}button:focus-visible,[tabindex]:focus-visible,summary:focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+.contact-item{width:100%;text-align:left;border-top:0;border-left:0;border-right:0;background:transparent}
+.chat-back{border:0;background:transparent;flex-shrink:0}
+.grid-2>*,.grid-3>*,.det-body{min-width:0}input,select,textarea{min-width:0;max-width:100%}
+.info-table{table-layout:fixed}.info-table td,.msg-bubble,#modNet,#modSig{overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.85em;margin:12px 0}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.actions>.btn{flex:1 1 140px;width:auto}
+@media(max-width:600px){.chat-area:not(.show){visibility:hidden}}
+/* 每日飞行时段：仅在本卡片内生效 */
+.air-card .air-heading{gap:8px;flex-wrap:wrap}
+.air-card .air-status{margin-bottom:16px;font-size:.85em}
+.air-card .air-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.air-card .air-current{font-size:.95em;padding:5px 12px}
+.air-card .air-clock{display:flex;gap:8px;flex-wrap:wrap;color:var(--text-light);font-variant-numeric:tabular-nums}
+.air-card .air-clock strong{color:var(--text);font-weight:600}
+.air-card .air-group{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.air-card .air-tag{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text-light)}
+.air-card .air-tag strong{color:var(--text);font-weight:600}
+.air-card .air-note{margin-top:8px;color:var(--text-light);overflow-wrap:anywhere}
+.air-card .air-override{padding:8px 12px;background:#eef2ff;border-radius:8px;color:var(--primary-dark)}
+.air-card .air-error{padding:8px 12px;background:#fee2e2;border-radius:8px;color:#b91c1c;white-space:pre-wrap}
+.air-card .air-fields{display:grid;grid-template-columns:minmax(100px,1fr) repeat(2,minmax(0,1fr));gap:12px;align-items:end}
+.air-card .air-fields label{min-width:0;margin-bottom:0}
+.air-card .air-fields input,.air-card .air-fields select{margin-top:6px;min-height:46px}
+.air-card .air-rule{font-size:.8em;color:var(--text-light);margin:8px 0 12px}
+.air-card .air-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0}
+.air-card .air-actions .btn{font-size:.8em;padding:12px 4px;min-width:0}
+.air-card .air-help{line-height:1.7}
+.air-card .air-actions .btn:disabled{opacity:.5;cursor:not-allowed}
+.air-card :focus-visible{outline:2px solid var(--primary);outline-offset:3px}
+@media(max-width:600px){.air-card .air-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.air-card .air-schedule{grid-column:1/-1}.air-card .air-fields input{padding:10px 8px}}
+@media(max-width:360px){.air-card .air-actions{grid-template-columns:1fr}.air-card .air-heading .card-sub{font-size:.75em}}
+)CSS";
+const char htmlPage[] PROGMEM = R"PAGE(<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=0"><title>短信转发器</title>
+<link rel="stylesheet" href="/assets/app.css?v=%CSS_VERSION%">
 </head><body><div class="c">
 
-<div class="nav">
-  <div class="nav-item active" onclick="swTab(0)">
+<div class="nav" role="tablist" aria-label="管理页面">
+  <div class="nav-item active" id="tab-overview" role="tab" aria-controls="overview" aria-selected="true" tabindex="0" onclick="swTab(0)">
     <div class="nav-icon" style="-webkit-mask-image:url('data:image/svg+xml;utf8,<svg viewBox=\'0 0 24 24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z\'/></svg>')"></div>
     <span>概览</span>
   </div>
-  <div class="nav-item" onclick="swTab(1)">
+  <div class="nav-item" id="tab-control" role="tab" aria-controls="control" aria-selected="false" tabindex="-1" onclick="swTab(1)">
     <div class="nav-icon" style="-webkit-mask-image:url('data:image/svg+xml;utf8,<svg viewBox=\'0 0 24 24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z\'/></svg>')"></div>
     <span>控制</span>
   </div>
-  <div class="nav-item" onclick="swTab(2)">
+  <div class="nav-item" id="tab-history" role="tab" aria-controls="history-page" aria-selected="false" tabindex="-1" onclick="swTab(2)">
     <div class="nav-icon" style="-webkit-mask-image:url('data:image/svg+xml;utf8,<svg viewBox=\'0 0 24 24\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z\'/></svg>')"></div>
     <span>历史</span>
   </div>
-  <div class="nav-item" onclick="swTab(3)">
+  <div class="nav-item" id="tab-config" role="tab" aria-controls="config" aria-selected="false" tabindex="-1" onclick="swTab(3)">
     <div class="nav-icon" style="-webkit-mask-image:url('data:image/svg+xml;utf8,<svg viewBox=%270 0 24 24%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97s-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66z%27/></svg>');mask-image:url('data:image/svg+xml;utf8,<svg viewBox=%270 0 24 24%27 xmlns=%27http://www.w3.org/2000/svg%27><path d=%27M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97s-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1s.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66z%27/></svg>')"></div>
     <span>配置</span>
   </div>
@@ -170,7 +185,7 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
 <div id="toast" class="toast"></div>
 
 <!-- ============ 概览页 ============ -->
-<div class="page active">
+<div class="page active" id="overview" role="tabpanel" aria-labelledby="tab-overview">
   <div class="card">
     <div class="card-t">统计数据 <span class="badge b-wait" id="upT">-</span></div>
     <div class="grid-3">
@@ -188,11 +203,7 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
         <div style="font-weight:700" id="wifiS">- dBm</div>
         <div class="badge b-ok" id="ipStr">%IP%</div>
       </div>
-      <div class="stat-box" style="text-align:left">
-        <div class="stat-tag">MQTT 状态</div>
-        <div style="font-weight:700" id="mqS">%MQTT_STATUS%</div>
-        <div style="font-size:0.8em;color:var(--text-light);margin-top:4px;word-break:break-all" id="mqTopics">%MQTT_TOPICS%</div>
-      </div>
+
     </div>
     
     <div class="stat-box" style="text-align:left;position:relative;margin-bottom:12px">
@@ -210,7 +221,22 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
 </div>
 
 <!-- ============ 控制页 ============ -->
-<div class="page">
+<div class="page" id="control" role="tabpanel" aria-labelledby="tab-control" hidden>
+<div class="card air-card">
+  <div class="card-t air-heading">每日飞行时段 <span class="card-sub">北京时间 · UTC+8</span></div>
+  <div id="airStatus" class="air-status" role="status" aria-live="polite">
+    <div class="air-summary"><span id="airCurrent" class="badge b-wait air-current">读取中</span><div class="air-clock"><span id="airDate">—</span><strong id="airClock">等待设备时间</strong></div></div>
+    <div class="air-group" aria-label="飞行状态"><span class="air-tag">目标 <strong id="airTarget">—</strong></span><span class="air-tag">实际 <strong id="airActual">—</strong></span></div>
+    <div class="air-group" aria-label="蜂窝连接"><span class="air-tag">SIM <strong id="airSim">—</strong></span><span class="air-tag">网络 <strong id="airNetwork">—</strong></span><span class="air-tag">附着 <strong id="airAttach">—</strong></span></div>
+    <p id="airProgress" class="air-note" hidden></p><p id="airOverride" class="air-note air-override" hidden></p><p id="airError" class="air-note air-error" hidden></p>
+  </div>
+  <form id="air" onsubmit="saveAir(event)">
+    <div class="air-fields"><label class="air-schedule">每日调度<select name="enabled" id="airEnabled"><option value="false">关闭</option><option value="true">开启</option></select></label><label>开始时间<input type="time" name="start" id="airStart" required></label><label>结束时间<input type="time" name="end" id="airEnd" required></label></div>
+    <p id="airRule" class="air-rule">每天按北京时间执行，支持跨午夜。</p><button class="btn">保存飞行规则</button>
+  </form>
+  <div class="air-actions"><button type="button" class="btn btn-w" onclick="airAction('on')">手动开启飞行</button><button type="button" class="btn btn-w" onclick="airAction('off')">手动关闭飞行</button><button type="button" id="airAuto" class="btn btn-w" onclick="airAction('auto')">恢复自动</button></div>
+  <p class="card-sub air-help">开启调度时，手动覆盖持续至下一开始或结束边界；关闭调度时，手动状态持续保留。开启调度后重启，校时后恢复自动。操作结果以设备回读为准。</p>
+</div>
   <div class="card">
     <div class="card-t">发送短信</div>
     <div class="fg"><label>目标号码</label><input id="sPh" placeholder="10086" type="tel"></div>
@@ -232,11 +258,14 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
 </div>
 
 <!-- ============ 历史页 ============ -->
-<div class="page">
+<div class="page" id="history-page" role="tabpanel" aria-labelledby="tab-history" hidden>
   <div class="card" style="padding:0;overflow:hidden">
     <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#fafbfc">
       <span style="font-weight:700;font-size:1.1em">短信历史</span>
-      <div class="badge b-wait" onclick="loadHist()" style="cursor:pointer">刷新</div>
+      <div style="display:flex;gap:8px">
+        <button type="button" class="btn btn-w" style="width:auto;padding:8px 12px;font-size:0.85em" onclick="loadHist()">刷新</button>
+        <button type="button" id="clearHistBtn" class="btn btn-d" style="width:auto;padding:8px 12px;font-size:0.85em" onclick="clearHist()">清空全部</button>
+      </div>
     </div>
     <div class="sms-container" id="smsContainer">
       <div class="contact-list" id="contactList">
@@ -246,16 +275,16 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
         <div class="chat-header" id="chatHeader" style="display:none">
           <div>
             <div class="chat-title" id="chatTitle">
-               <div class="chat-back" onclick="backToList()">
+               <button type="button" class="chat-back" aria-label="返回联系人" onclick="backToList()">
                  <svg viewBox="0 0 24 24" width="24" height="24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg>
-               </div>
+               </button>
                <span id="chatName">选择联系人</span>
             </div>
             <div class="chat-msg-count" id="chatCount" style="margin-left:36px"></div>
           </div>
         </div>
         <div class="chat-messages" id="chatMessages">
-          <div class="chat-empty">👈 选择左侧号码查看短信</div>
+          <div class="chat-empty">选择左侧号码查看短信</div>
         </div>
       </div>
     </div>
@@ -263,594 +292,109 @@ const char* htmlPage = R"rawliteral(<!DOCTYPE html><html><head><meta charset="UT
 </div>
 
 <!-- ============ 配置页 ============ -->
-<div class="page">
-  <form id="cf" onsubmit="return saveAll(event)">
+<div class="page" id="config" role="tabpanel" aria-labelledby="tab-config" hidden>
+  <form id="cf" onsubmit="event.preventDefault();post('/save',new URLSearchParams(new FormData(this)))">
   
-  <details open>
-    <summary>WiFi 网络 <span class="card-sub">自动选择信号最强的</span></summary>
-    <div class="det-body">
-      %WIFI_NETWORKS%
-      <div style="font-size:0.85em;color:var(--text-light);margin-top:8px">
-        💡 可配置多个WiFi，设备会自动连接信号最强的网络。修改后需重启生效。
-      </div>
-    </div>
-  </details>
-
-  <details>
-    <summary>Web 管理 & 邮箱</summary>
-    <div class="det-body">
-      <div class="grid-2">
-        <div class="fg"><label>Web账号</label><input name="webUser" value="%WEB_USER%"></div>
-        <div class="fg"><label>Web密码</label><input name="webPass" value="%WEB_PASS%"></div>
-      </div>
-      <div class="sw-row" onclick="xToggle('smEn')">
-         <span>启用 SMTP 邮件推送</span>
-         <div id="smEnSw" class="sw %SMTP_EN_SW%"></div>
-         <input type="hidden" id="smEn" name="smtpEn" value="%SMTP_EN_VAL%">
-      </div>
-      <div id="smBox" style="display:%SMTP_DISP%">
-        <div class="fg"><label>SMTP 服务器</label><input name="smtpServer" value="%SMTP_SERVER%"></div>
-        <div class="grid-2">
-           <div class="fg"><label>端口</label><input name="smtpPort" type="number" value="%SMTP_PORT%"></div>
-           <div class="fg"><label>发件账号</label><input name="smtpUser" value="%SMTP_USER%"></div>
-        </div>
-        <div class="fg"><label>授权码/密码</label><input name="smtpPass" type="password" value="%SMTP_PASS%"></div>
-        <div class="fg"><label>接收邮箱</label><input name="smtpSendTo" value="%SMTP_SEND_TO%"></div>
-      </div>
-    </div>
-  </details>
-
-  <details>
-    <summary>MQTT 设置</summary>
-    <div class="det-body">
-      <div class="sw-row" onclick="xToggle('mqEn')">
-         <span>启用 MQTT</span>
-         <div id="mqEnSw" class="sw %MQTT_EN_SW%"></div>
-         <input type="hidden" id="mqEn" name="mqttEn" value="%MQTT_EN_VAL%">
-      </div>
-      <div id="mqBox" style="display:%MQTT_DISP%">
-         <div class="grid-2">
-            <div class="fg"><label>服务器</label><input name="mqttServer" value="%MQTT_SERVER%"></div>
-            <div class="fg"><label>端口</label><input name="mqttPort" type="number" value="%MQTT_PORT%"></div>
-         </div>
-         <div class="grid-2">
-            <div class="fg"><label>账号</label><input name="mqttUser" value="%MQTT_USER%"></div>
-            <div class="fg"><label>密码</label><input name="mqttPass" type="password" value="%MQTT_PASS%"></div>
-         </div>
-         <div class="fg"><label>Topic 前缀</label><input name="mqttPrefix" value="%MQTT_PREFIX%"></div>
-         <div class="sw-row" onclick="xToggle('mqCo')">
-            <span>仅控制模式 (不推内容)</span>
-            <div id="mqCoSw" class="sw %MQTT_CO_SW%"></div>
-            <input type="hidden" id="mqCo" name="mqttCtrlOnly" value="%MQTT_CO_VAL%">
-         </div>
-         
-         <div style="border-top:1px solid var(--border);margin:12px 0 8px;padding-top:12px">
-           <div style="font-weight:600;margin-bottom:8px">Home Assistant 自动发现</div>
-           <div class="sw-row" onclick="xToggle('mqHa')">
-              <span>启用 HA 自动发现</span>
-              <div id="mqHaSw" class="sw %MQTT_HA_SW%"></div>
-              <input type="hidden" id="mqHa" name="mqttHaDiscovery" value="%MQTT_HA_VAL%">
-           </div>
-           <div id="mqHaBox" style="display:%MQTT_HA_DISP%">
-             <div class="fg"><label>HA 发现前缀</label><input name="mqttHaPrefix" value="%MQTT_HA_PREFIX%" placeholder="homeassistant"></div>
-             <div style="font-size:0.85em;color:var(--text-light);margin-top:4px">
-               💡 启用后设备将自动注册到 Home Assistant，无需手动配置 YAML 文件。
-             </div>
-           </div>
-         </div>
-      </div>
-    </div>
-  </details>
-
-  <details>
-    <summary>Web 通道</summary>
-    <div class="det-body">
-      %PUSH_CHANNELS%
-    </div>
-  </details>
-
-  <details>
-    <summary>号码黑白名单过滤 (Max 100) <span id="ftModeBadge" class="badge b-wait" style="margin-left:8px">未启用</span></summary>
-    <div class="det-body">
-      <div class="sw-row" onclick="xToggle('ftEn');updFtMode()">
-         <span>启用过滤</span>
-         <div id="ftEnSw" class="sw"></div>
-         <input type="hidden" id="ftEn" name="filterEn" value="%FILTER_EN_VAL%">
-      </div>
-      <div id="ftModeBox" style="margin-top:12px">
-        <label style="margin-bottom:8px">过滤模式</label>
-        <div class="mode-toggle">
-          <div class="mode-btn" id="modeBl" onclick="setFtMode(false)">
-            <div class="mode-icon">🚫</div>
-            <div class="mode-title">黑名单模式</div>
-            <div class="mode-desc">拦截列表中的号码</div>
-          </div>
-          <div class="mode-btn" id="modeWl" onclick="setFtMode(true)">
-            <div class="mode-icon">✅</div>
-            <div class="mode-title">仅白名单</div>
-            <div class="mode-desc">只接收列表中的号码</div>
-          </div>
-        </div>
-        <input type="hidden" id="ftWl" name="filterIsWhitelist" value="%FILTER_WL_VAL%">
-        <div id="ftModeHint" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px;margin-bottom:12px;font-size:0.85em"></div>
-        <div class="fg">
-          <label id="ftListLabel">号码列表</label>
-          <textarea id="ftList" name="filterList" rows="5" placeholder="输入号码，多个号码用逗号分隔，例如: 10086,13800000000"></textarea>
-        </div>
-      </div>
-      <button type="button" class="btn btn-w" onclick="saveFilter()">仅保存名单设置</button>
-    </div>
-  </details>
-
-  <details>
-    <summary>内容关键词过滤 <span id="cfModeBadge" class="badge b-wait" style="margin-left:8px">未启用</span></summary>
-    <div class="det-body">
-      <div class="sw-row" onclick="xToggle('cfEn');updCfMode()">
-         <span>启用内容过滤</span>
-         <div id="cfEnSw" class="sw"></div>
-         <input type="hidden" id="cfEn" name="contentFilterEn" value="%CF_EN_VAL%">
-      </div>
-      <div id="cfModeBox" style="margin-top:12px">
-        <label style="margin-bottom:8px">过滤模式</label>
-        <div class="mode-toggle">
-          <div class="mode-btn" id="cfModeBl" onclick="setCfMode(false)">
-            <div class="mode-icon">🚫</div>
-            <div class="mode-title">黑名单模式</div>
-            <div class="mode-desc">拦截包含关键词的短信</div>
-          </div>
-          <div class="mode-btn" id="cfModeWl" onclick="setCfMode(true)">
-            <div class="mode-icon">🔍</div>
-            <div class="mode-title">仅白名单</div>
-            <div class="mode-desc">只转发包含关键词的短信</div>
-          </div>
-        </div>
-        <input type="hidden" id="cfWl" name="contentFilterIsWhitelist" value="%CF_WL_VAL%">
-        <div id="cfModeHint" style="background:#fef9c3;border:1px solid #fcd34d;border-radius:8px;padding:10px;margin-bottom:12px;font-size:0.85em"></div>
-        <div class="fg">
-          <label id="cfListLabel">关键词列表</label>
-          <textarea id="cfList" name="contentFilterList" rows="4" placeholder="输入关键词，多个关键词用逗号分隔，例如: 验证码,快递,银行"></textarea>
-        </div>
-        <div style="font-size:0.85em;color:var(--text-light);margin-bottom:12px">
-          💡 关键词匹配不区分大小写。可用于过滤广告短信或只接收重要短信。
-        </div>
-      </div>
-      <button type="button" class="btn btn-w" onclick="saveContentFilter()">仅保存关键词设置</button>
-    </div>
-  </details>
-
-  <details>
-    <summary>定时任务 <span id="tmBadge" class="badge b-wait" style="margin-left:8px">未启用</span></summary>
-    <div class="det-body">
-      <div class="sw-row" onclick="xToggle('tmEn');updTmInfo()">
-         <span>启用任务</span>
-         <div id="tmEnSw" class="sw"></div>
-         <input type="hidden" id="tmEn" name="timerEn" value="%TIMER_EN_VAL%">
-      </div>
-      <div class="fg"><label>类型 & 间隔(天)</label>
-        <div class="grid-2">
-          <select id="tmType" name="timerType" onchange="$('tmSms').style.display=this.value==1?'block':'none';updTmInfo()"><option value="0">Ping保活</option><option value="1">发送短信</option></select>
-          <input type="number" id="tmInt" name="timerInterval" min="1" onchange="updTmInfo()">
-        </div>
-      </div>
-      <div id="tmSms" style="display:none">
-        <div class="fg"><label>对方号码</label><input id="tmPh" name="timerPhone"></div>
-        <div class="fg"><label>短信内容</label><input id="tmMsg" name="timerMessage"></div>
-      </div>
-      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:12px;margin-bottom:12px" id="tmInfo"></div>
-      <button type="button" class="btn btn-w" onclick="saveTimer()">仅保存任务设置</button>
-    </div>
-  </details>
-
-  <div style="height:60px"></div>
-  <div style="position:fixed;bottom:80px;left:0;right:0;padding:12px;pointer-events:none">
-    <button class="c btn" style="pointer-events:auto;box-shadow:0 10px 20px rgba(99,102,241,0.3)">保存所有系统配置</button>
-  </div>
-
+%CONFIG%<div style="height:60px"></div><div style="position:fixed;bottom:80px;left:0;right:0;padding:12px;pointer-events:none"><button class="c btn" style="pointer-events:auto;box-shadow:0 10px 20px rgba(99,102,241,0.3)">保存所有系统配置</button></div>
   </form>
 </div>
 
 <script>
-// 初始化数据
-var ft={en:%FILTER_EN_BOOL%,wl:%FILTER_WL_BOOL%,ls:'%FILTER_LIST%'};
-var cf={en:%CF_EN_BOOL%,wl:%CF_WL_BOOL%,ls:'%CF_LIST%'};
-var tm={en:%TIMER_EN_BOOL%,tp:%TIMER_TP%,int:%TIMER_INT%,ph:'%TIMER_PH%',ms:'%TIMER_MS%',rm:%TIMER_RM%};
-
-// 状态初始化 - 号码过滤
-if(ft.en){$('ftEnSw').className='sw on';$('ftEn').value='true'}
-$('ftWl').value=ft.wl?'true':'false';
-$('ftList').value=ft.ls;
-
-// 状态初始化 - 内容过滤
-if(cf.en){$('cfEnSw').className='sw on';$('cfEn').value='true'}
-$('cfWl').value=cf.wl?'true':'false';
-$('cfList').value=cf.ls;
-
-if(tm.en){$('tmEnSw').className='sw on';$('tmEn').value='true'}
-$('tmType').value=tm.tp;$('tmInt').value=tm.int;$('tmPh').value=tm.ph;$('tmMsg').value=tm.ms;
-if(tm.tp==1)$('tmSms').style.display='block';
-
-// 更新定时任务信息显示
-function updTmInfo(){
-  var en=$('tmEn').value==='true';
-  var tp=+$('tmType').value;
-  var days=+$('tmInt').value||0;
-  var badge=$('tmBadge');
-  var info=$('tmInfo');
-  var typeName=tp===0?'Ping保活':'发送短信';
-  
-  if(!en){
-    badge.className='badge b-wait';badge.innerText='未启用';
-    info.innerHTML='<div style="color:#64748b">⏸ 定时任务已禁用</div>';
-    return;
-  }
-  badge.className='badge b-ok';badge.innerText=typeName;
-  
-  // 计算剩余时间（天+小时）
-  var rmSec=tm.rm;
-  var rmDays=Math.floor(rmSec/86400);
-  var rmHours=Math.floor((rmSec%86400)/3600);
-  var rmStr=rmDays>0?(rmDays+'天'):'';rmStr+=(rmHours>0?(rmHours+'小时'):'');
-  if(!rmStr)rmStr='即将执行';
-  
-  var html='<div style="font-weight:600;color:#0369a1;margin-bottom:6px">✅ 定时任务已启用</div>';
-  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:0.9em">';
-  html+='<div><span style="color:#64748b">任务类型:</span> <b>'+typeName+'</b></div>';
-  html+='<div><span style="color:#64748b">执行间隔:</span> <b>每 '+days+' 天</b></div>';
-  html+='<div><span style="color:#64748b">下次执行:</span> <b>'+rmStr+'后</b></div>';
-  if(tp===1){html+='<div><span style="color:#64748b">发送至:</span> <b>'+($('tmPh').value||'未设置')+'</b></div>';}
-  html+='</div>';
-  info.innerHTML=html;
+const $=id=>document.getElementById(id);
+let toastTimer;function notice(text){$('toast').textContent=text;$('toast').className='toast show';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').className='toast',2000)}
+async function post(url,body){try{const r=await fetch(url,{method:'POST',body});const d=await r.json();notice(d.message||'请求已处理');if(url.startsWith('/airplane'))await refreshAir(false);return d}catch(e){notice('请求失败：'+e.message)}}
+let airLoaded=false,airEdited=false;
+function airRule(){const start=$('airStart').value,end=$('airEnd').value;if(!start||!end)return;const minutes=t=>Number(t.slice(0,2))*60+Number(t.slice(3));const span=(minutes(end)-minutes(start)+1440)%1440;$('airRule').textContent=start===end?'开始与结束时间不能相同。':(end<start?'跨日 · 次日结束':'当日结束')+' · 飞行 '+Math.floor(span/60)+' 小时'+(span%60?' '+span%60+' 分钟':'')+($('airEnabled').value==='true'?' · 每日执行':' · 调度已关闭')}
+$('air').addEventListener('input',()=>{airEdited=true;airRule()});
+$('air').addEventListener('change',()=>{airEdited=true;airRule()});
+function renderAir(d){
+  const actual={1:'正常',4:'飞行'}[d.actual]||'未知';
+  const current=d.switching?'切换中':d.restoring?'恢复中':actual==='未知'?'状态未知':actual==='飞行'?'飞行模式':'正常运行';
+  $('airCurrent').textContent=current;$('airCurrent').className='badge air-current '+(d.switching||d.restoring?'b-warn':d.actual===1?'b-ok':'b-wait');
+  const clock=String(d.beijing||'未校时').split(' ');$('airDate').textContent=d.synced===false?'设备时间':clock.length>1?clock[0]:'设备时间';$('airClock').textContent=d.synced===false?'未校时':clock.length>1?clock.slice(1).join(' '):clock[0];
+  $('airTarget').textContent=d.targetKnown?(d.target?'飞行':'正常'):'待校时确认';$('airActual').textContent=actual;
+  $('airSim').textContent=d.simReady?'已就绪':'未就绪';$('airNetwork').textContent=d.registered?'已注册':'未注册';$('airAttach').textContent=d.attached?'已附着':'未附着';
+  const progress=[d.synced===false?'设备尚未校时，自动调度等待时间同步。':'',d.switching?'正在切换射频状态，请等待设备回读。':d.restoring?'正在恢复模组与短信接收，请等待网络就绪。':''].filter(Boolean).join(' ');
+  $('airProgress').textContent=progress;$('airProgress').hidden=!progress;
+  const until=d.overrideUntil?new Date(d.overrideUntil*1000).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'首次校时后确定';
+  $('airOverride').textContent=d.override?'临时覆盖 · 手动'+(d.target?'开启':'关闭')+'飞行 · 截止 '+until+'（北京时间）':d.enabled?'自动调度 · 无临时覆盖':'调度已关闭 · 当前状态手动保持';$('airOverride').hidden=false;
+  $('airError').textContent=d.error?'设备错误：'+d.error:'';$('airError').hidden=!d.error;$('airAuto').disabled=!d.enabled;$('airAuto').title=d.enabled?'清除临时覆盖，按每日规则执行':'请先开启并保存每日调度';
 }
-updTmInfo();
-
-// 设置过滤模式
-function setFtMode(isWhitelist){
-  $('ftWl').value=isWhitelist?'true':'false';
-  updFtMode();
-}
-
-// 更新过滤模式 UI
-function updFtMode(){
-  var en=$('ftEn').value==='true';
-  var wl=$('ftWl').value==='true';
-  var badge=$('ftModeBadge');
-  var hint=$('ftModeHint');
-  var modeBox=$('ftModeBox');
-  
-  // 更新按钮选中状态
-  $('modeBl').className='mode-btn'+(wl?'':' active');
-  $('modeWl').className='mode-btn'+(wl?' active':'');
-  
-  // 更新徽章
-  if(!en){
-    badge.className='badge b-wait';badge.innerText='未启用';
-    modeBox.style.opacity='0.5';
-  }else{
-    modeBox.style.opacity='1';
-    if(wl){
-      badge.className='badge b-ok';badge.innerText='仅白名单';
-    }else{
-      badge.className='badge b-err';badge.innerText='黑名单';
-    }
-  }
-  
-  // 更新提示文字和标签
-  if(wl){
-    hint.innerHTML='<span style="color:#0369a1">✅ 仅白名单模式</span>：只有列表中的号码发送的短信会被转发，其他号码将被<b>拦截</b>。';
-    $('ftListLabel').innerText='允许的号码 (只接收这些)';
-  }else{
-    hint.innerHTML='<span style="color:#b91c1c">🚫 黑名单模式</span>：列表中的号码发送的短信会被<b>拦截</b>，其他号码正常转发。';
-    $('ftListLabel').innerText='拦截的号码 (屏蔽这些)';
-  }
-}
-updFtMode();
-
-// 设置内容过滤模式
-function setCfMode(isWhitelist){
-  $('cfWl').value=isWhitelist?'true':'false';
-  updCfMode();
-}
-
-// 更新内容过滤模式 UI
-function updCfMode(){
-  var en=$('cfEn').value==='true';
-  var wl=$('cfWl').value==='true';
-  var badge=$('cfModeBadge');
-  var hint=$('cfModeHint');
-  var modeBox=$('cfModeBox');
-  
-  // 更新按钮选中状态
-  $('cfModeBl').className='mode-btn'+(wl?'':' active');
-  $('cfModeWl').className='mode-btn'+(wl?' active':'');
-  
-  // 更新徽章
-  if(!en){
-    badge.className='badge b-wait';badge.innerText='未启用';
-    modeBox.style.opacity='0.5';
-  }else{
-    modeBox.style.opacity='1';
-    if(wl){
-      badge.className='badge b-ok';badge.innerText='仅白名单';
-    }else{
-      badge.className='badge b-warn';badge.innerText='黑名单';
-    }
-  }
-  
-  // 更新提示文字和标签
-  if(wl){
-    hint.innerHTML='<span style="color:#0369a1">🔍 仅白名单模式</span>：只有包含关键词的短信会被转发，其他短信将被<b>拦截</b>。适合只接收验证码等重要短信。';
-    $('cfListLabel').innerText='必须包含的关键词 (只转发这些)';
-  }else{
-    hint.innerHTML='<span style="color:#a16207">🚫 黑名单模式</span>：包含关键词的短信会被<b>拦截</b>，其他短信正常转发。适合过滤广告短信。';
-    $('cfListLabel').innerText='拦截的关键词 (屏蔽这些)';
-  }
-}
-updCfMode();
-
-// 页面切换
-function swTab(n){
-  document.querySelectorAll('.nav-item').forEach((e,i)=>e.className='nav-item'+(i===n?' active':''));
-  document.querySelectorAll('.page').forEach((e,i)=>e.className='page'+(i===n?' active':''));
+async function refreshAir(fill){try{const r=await fetch('/airplane');if(r.ok===false)throw new Error('HTTP '+r.status);const d=await r.json();if(fill&&!airLoaded){if(!airEdited){$('airEnabled').value=String(d.enabled);$('airStart').value=d.start;$('airEnd').value=d.end;airRule()}airLoaded=true}renderAir(d)}catch(e){$('airError').textContent='飞行状态读取失败，请等待刷新或检查设备连接。';$('airError').hidden=false}}
+function saveAir(e){e.preventDefault();return post('/airplane/save',new URLSearchParams(new FormData(e.target)))}
+function airAction(action){return post('/airplane/action',new URLSearchParams({action}))}
+async function refresh(){try{const d=await(await fetch('/stats')).json();$('ssRecv').textContent=d.received;$('ssSent').textContent=d.sent;$('ssBoot').textContent=d.boots;$('wifiS').textContent=d.wifiRssi+' dBm';$('upT').textContent='运行 '+Math.floor(d.uptime/3600)+' 小时 / 内存 '+(d.freeHeap/1024).toFixed(0)+'K'}catch(e){notice('设备状态读取失败')}return refreshAir(true)}
+async function autoLoad(){await refresh();await query('network');await query('signal');await query('siminfo')}
+function act(t){if(t==='sms')return post('/sendsms',new URLSearchParams({phone:$('sPh').value,content:$('sTx').value}));if(t==='reboot')return post('/restart',new URLSearchParams());if(t==='ping')return post('/ping',new URLSearchParams()).then(d=>{$('pLog').style.display='block';$('pLog').textContent=d.message})}
+async function query(type){try{const d=await(await fetch('/query?type='+type)).json();if(type==='siminfo'){$('modSim').textContent=d.success?'SIM OK':'SIM ERR';$('modSim').className='badge '+(d.success?'b-ok':'b-err')}else{const e=$(type==='network'?'modNet':'modSig');e.innerHTML=d.message;if(type==='network')e.style.color=d.success?'#15803d':'#b91c1c'}}catch(e){notice('查询失败')}}
+const tabIds=['overview','control','history-page','config'];
+function swTab(n,focus=false,updateHash=true){
+  if(n<0||n>=tabIds.length)n=0;
+  document.querySelectorAll('[role="tab"]').forEach((e,i)=>{e.classList.toggle('active',i===n);e.setAttribute('aria-selected',String(i===n));e.tabIndex=i===n?0:-1;if(focus&&i===n)e.focus()});
+  tabIds.forEach((id,i)=>{$(id).hidden=i!==n;$(id).classList.toggle('active',i===n)});
+  if(updateHash&&location.hash!=='#'+tabIds[n])window.history.replaceState(null,'','#'+tabIds[n]);
   if(n===2)loadHist();
 }
-
-// 交互函数
-function xToggle(id){
-  var i=$(id),s=$(id+'Sw');
-  if(i.value==='true'){i.value='false';s.className='sw'}
-  else{i.value='true';s.className='sw on'}
-  // 联动显示
-  if(id==='smEn')$('smBox').style.display=i.value==='true'?'block':'none';
-  if(id==='mqEn')$('mqBox').style.display=i.value==='true'?'block':'none';
-  if(id==='mqHa')$('mqHaBox').style.display=i.value==='true'?'block':'none';
+function hashTab(){const n=tabIds.indexOf(location.hash.slice(1));swTab(n<0?0:n,false,false)}
+document.querySelector('[role="tablist"]').addEventListener('keydown',e=>{
+  const tabs=[...document.querySelectorAll('[role="tab"]')],i=tabs.indexOf(e.target);if(i<0)return;
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();swTab(i,true);return}
+  const keys={ArrowRight:(i+1)%4,ArrowLeft:(i+3)%4,Home:0,End:3};
+  if(Object.hasOwn(keys,e.key)){e.preventDefault();swTab(keys[e.key],true)}
+});
+window.addEventListener('hashchange',hashTab);
+let smsData=[],curContact=null,histLoading=false,histClearing=false,histRequest=0;
+function emptyHist(){
+  smsData=[];curContact=null;
+  $('contactList').replaceChildren(node('p','chat-empty','暂无联系人'));
+  $('chatMessages').replaceChildren(node('p','chat-empty','暂无短信记录'));
+  $('chatHeader').style.display='none';$('chatName').textContent='选择联系人';$('chatCount').textContent='';
+  const avatar=$('chatTitle').querySelector('.contact-avatar');if(avatar)avatar.remove();
+  backToList(false);
 }
-function fd(i){
-  var b=$('chb'+i),s=$('chi'+i);
-  if(b.style.display==='none'){b.style.display='block';s.style.transform='rotate(90deg)'}
-  else{b.style.display='none';s.style.transform='rotate(0)'}
+async function clearHist(){
+  if(histClearing||!confirm('确定清空本机全部短信历史吗？将删除所有联系人的记录，无法恢复。配置和统计保持不变。'))return;
+  histClearing=true;++histRequest;histLoading=false;
+  const button=$('clearHistBtn');button.disabled=true;button.textContent='清理中...';
+  try{
+    const r=await fetch('/history/clear',{method:'POST'});const d=await r.json();
+    if(!r.ok||d.success!==true)throw new Error(d.message||'短信历史清理失败');
+    emptyHist();notice(d.message||'已清空本机全部短信历史');
+  }catch(e){notice(e.message||'短信历史清理失败，请重试')}
+  finally{histClearing=false;button.disabled=false;button.textContent='清空全部'}
 }
-function chTog(i){
-  var v=$('che'+i),s=$('chs'+i);
-  if(v.value==='true'){v.value='false';s.className='sw'}
-  else{v.value='true';s.className='sw on'}
+function node(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+async function loadHist(){
+  if(histLoading||histClearing)return;histLoading=true;const request=++histRequest;
+  try{const r=await fetch('/history');if(r.ok===false)throw new Error('读取失败');const d=await r.json();if(request!==histRequest)return;smsData=d.history||[];$('contactList').replaceChildren();
+    const groups=new Map();for(const m of smsData){if(!groups.has(m.s))groups.set(m.s,[]);groups.get(m.s).push(m)}
+    const contacts=[...groups].sort((a,b)=>b[1].map(m=>m.t).sort().pop().localeCompare(a[1].map(m=>m.t).sort().pop()));
+    for(const [name,msgs] of contacts){const latest=[...msgs].sort((a,b)=>b.t.localeCompare(a.t))[0];const b=node('button','contact-item');b.type='button';b.dataset.name=name;b.onclick=()=>selContact(name,true);
+      const avatar=node('span','contact-avatar',name.length>2?name.slice(0,1):name);avatar.style.background=getAvatarColor(name);b.append(avatar);const info=node('span','contact-info'),nr=node('span','contact-name-row'),pr=node('span','contact-preview-row');nr.append(node('span','contact-name',name),node('span','contact-time',latest.t.slice(5,16)));pr.append(node('span','contact-preview',latest.m.slice(0,20)+(latest.m.length>20?'...':'')));if(msgs.length>1)pr.append(node('span','contact-badge',String(msgs.length)));info.append(nr,pr);b.append(info);$('contactList').append(b)}
+    if(contacts.length){selContact(groups.has(curContact)?curContact:contacts[0][0],false)}else{emptyHist()}
+  }catch(e){if(request===histRequest)notice('历史读取失败')}finally{if(request===histRequest)histLoading=false}
 }
-function wfTog(i){
-  var v=$('wfe'+i),s=$('wfs'+i);
-  if(v.value==='true'){v.value='false';s.className='sw'}
-  else{v.value='true';s.className='sw on'}
-}
+function selContact(name,open=true){curContact=name;document.querySelectorAll('.contact-item').forEach(e=>e.classList.toggle('active',e.dataset.name===name));const msgs=smsData.filter(m=>m.s===name).sort((a,b)=>a.t.localeCompare(b.t));$('chatHeader').style.display='flex';$('chatName').textContent=name;let av=$('chatTitle').querySelector('.contact-avatar');if(!av){av=node('span','contact-avatar');av.style.cssText='width:28px;height:28px;font-size:0.8em';$('chatTitle').insertBefore(av,$('chatName'))}av.textContent=name.length>2?name.slice(0,1):name;av.style.background=getAvatarColor(name);$('chatCount').textContent=msgs.length+'条短信';$('chatMessages').replaceChildren();let lastDay='';for(const m of msgs){const day=m.t.slice(0,10);if(day!==lastDay){const d=node('div','chat-day');d.append(node('span','',day));$('chatMessages').append(d);lastDay=day}const b=node('div','msg-bubble msg-in');b.append(node('div','',m.m),node('span','msg-time',m.t.slice(11,16)));$('chatMessages').append(b)}if(open){document.querySelector('.chat-area').classList.add('show');if(innerWidth<=600)document.querySelector('.chat-back').focus()}requestAnimationFrame(()=>$('chatMessages').scrollTop=$('chatMessages').scrollHeight)}
+function backToList(focus=true){document.querySelector('.chat-area').classList.remove('show');if(focus){const b=[...document.querySelectorAll('.contact-item')].find(e=>e.dataset.name===curContact);if(b)b.focus()}}
 function upd(i){
   var t=$('tp'+i).value;
-  $('cf'+i).style.display=(t=='4')?'block':'none'; // 自定义模板
-  // Telegram(5) 和 钉钉(7) 需要显示 Key1 输入框
-  var showK1=(t=='5'||t=='7');
+  $('cf'+i).style.display=(t=='4')?'block':'none';
+  var showK1=(t=='5'||t=='7'||t=='8');
   $('k1'+i).style.display=showK1?'block':'none';
-  // 动态更新标签
   var lbl=$('k1l'+i);
   if(lbl){lbl.innerText=(t=='5')?'Chat ID':'加签密钥 (可选)';}
+  var key=$('k1'+i).querySelector('input');
+  if(key){key.placeholder=(t=='5')?'如 123456789':(t=='8'?'飞书机器人签名校验密钥（可选）':'SEC开头的密钥');}
 }
+for(let i=0;i<3;i++)upd(i);
 
-// 自动加载函数
-function autoLoad(){
-  fetch('/stats').then(r=>r.json()).then(d=>{
-    $('ssRecv').innerText=d.received;$('ssSent').innerText=d.sent;$('ssBoot').innerText=d.boots;
-    $('wifiS').innerText=d.wifiRssi+' dBm';
-    var h=Math.floor(d.uptime/3600);
-    $('upT').innerText='运行 '+h+' 小时 / 内存 '+(d.freeHeap/1024).toFixed(0)+'K';
-  }).catch(e=>{console.log('stats error',e)});
-  
-  // 自动查询模组信息
-  fetch('/query?type=network').then(r=>r.json()).then(d=>{
-    if(d.success){$('modNet').innerHTML=d.message;$('modNet').style.color='#15803d'}
-    else{$('modNet').innerText='未注册网络';$('modNet').style.color='#b91c1c'}
-  }).catch(e=>{$('modNet').innerText='查询失败';console.log('network error',e)});
-  
-  setTimeout(()=>{
-    fetch('/query?type=signal').then(r=>r.json()).then(d=>{$('modSig').innerHTML=d.message}).catch(e=>{});
-    fetch('/query?type=siminfo').then(r=>r.json()).then(d=>{
-        var s=$('modSim');
-        if(d.success){s.innerText='SIM OK';s.className='badge b-ok'}else{s.innerText='SIM ERR';s.className='badge b-err'}
-    }).catch(e=>{});
-  },2000);
-}
-
-function act(t){
-  if(t==='reboot'){postJ('/restart',{},d=>toast(d.message));return}
-  if(t==='sms'){
-    var p=$('sPh').value,x=$('sTx').value;
-    if(!p||!x)return toast('请填写号码和内容');
-    toast('发送中...');
-    postJ('/sendsms',{phone:p,content:x},d=>toast(d.message));
-  }
-  if(t==='ping'){
-    var l=$('pLog');l.style.display='block';l.innerText='正在 Ping 8.8.8.8 ...';
-    postJ('/ping',{},d=>{
-        l.innerText=d.message;l.style.color=d.success?'#15803d':'#b91c1c';
-    });
-  }
-}
-
-
-// 短信历史数据和当前选中的联系人
-var smsData=[];
-var curContact=null;
-// 颜色池
 const colors=['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#6366f1','#14b8a6'];
-function getAvatarColor(name){
-  let hash=0;
-  for(let i=0;i<name.length;i++)hash=name.charCodeAt(i)+((hash<<5)-hash);
-  return colors[Math.abs(hash)%colors.length];
-}
-
-function loadHist(){
-  $('contactList').innerHTML='<div style="text-align:center;padding:20px;color:#94a3b8;font-size:0.85em">加载中...</div>';
-  $('chatMessages').innerHTML='<div class="chat-empty"><div style="font-size:2em;margin-bottom:10px">💬</div><div>加载中...</div></div>';
-  fetch('/history').then(r=>r.json()).then(d=>{
-    smsData=d.history||[];
-    if(smsData.length==0){
-      $('contactList').innerHTML='<div style="text-align:center;padding:30px 10px;color:#94a3b8;font-size:0.85em">暂无短信</div>';
-      $('chatMessages').innerHTML='<div class="chat-empty"><div style="font-size:2em;margin-bottom:10px">📭</div><div>暂无短信记录</div></div>';
-      return;
-    }
-    // 按发送者分组
-    var contacts={};
-    smsData.forEach(i=>{
-      if(!contacts[i.s])contacts[i.s]={name:i.s,msgs:[],lastTime:i.t};
-      contacts[i.s].msgs.push(i);
-      if(i.t>contacts[i.s].lastTime)contacts[i.s].lastTime=i.t;
-    });
-    // 按最新消息时间排序联系人
-    var sortedContacts=Object.values(contacts).sort((a,b)=>b.lastTime.localeCompare(a.lastTime));
-    // 渲染联系人列表
-    var h='';
-    sortedContacts.forEach((c,idx)=>{
-      var preview=c.msgs[0].m.substring(0,20)+(c.msgs[0].m.length>20?'...':'');
-      var shortTime=c.lastTime.substring(5,16);
-      var avColor=getAvatarColor(c.name);
-      var avText=c.name.replace('+','').substring(0,1);
-      avText = c.name.length > 2 ? c.name.substring(0,1) : c.name;
-
-      h+=`<div class="contact-item${idx===0?' active':''}" onclick="selContact('${c.name.replace(/'/g,"\\'")}')" data-name="${c.name}">
-        <div class="contact-avatar" style="background:${avColor}">${avText}</div>
-        <div class="contact-info">
-          <div class="contact-name-row">
-             <div class="contact-name">${c.name}</div>
-             <div class="contact-time">${shortTime}</div>
-          </div>
-          <div class="contact-preview-row">
-             <div class="contact-preview">${preview}</div>
-             ${c.msgs.length>1 ? '<div class="contact-badge">'+c.msgs.length+'</div>' : ''}
-          </div>
-        </div>
-      </div>`;
-    });
-    $('contactList').innerHTML=h;
-    // 默认选中第一个联系人
-    if(sortedContacts.length>0)selContact(sortedContacts[0].name);
-  }).catch(e=>{
-    console.error('加载短信失败',e);
-    $('contactList').innerHTML='<div style="text-align:center;padding:20px;color:#b91c1c;font-size:0.85em">加载失败</div>';
-  });
-}
-
-function selContact(name){
-  curContact=name;
-  // 更新联系人列表高亮
-  document.querySelectorAll('.contact-item').forEach(e=>{
-    e.classList.toggle('active',e.dataset.name===name);
-  });
-  // 过滤该联系人的消息
-  var msgs=smsData.filter(i=>i.s===name);
-  if(msgs.length===0){
-    $('chatMessages').innerHTML='<div class="chat-empty">无消息</div>';
-    return;
-  }
-  // 按时间正序排列（旧的在上）
-  msgs.sort((a,b)=>a.t.localeCompare(b.t));
-  
-  // 显示聊天头部
-  $('chatHeader').style.display='flex';
-  var avColor=getAvatarColor(name);
-  var avText=name.length > 2 ? name.substring(0,1) : name;
-  
-  // 移动端显示返回按钮和名字
-  var backBtn='<div class="chat-back" onclick="backToList()"><svg viewBox="0 0 24 24" width="24" height="24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="#64748b"/></svg></div>';
-  $('chatTitle').innerHTML=`${backBtn}<div class="contact-avatar" style="width:28px;height:28px;font-size:0.8em;background:${avColor}">${avText}</div> ${name}`;
-  $('chatCount').innerText=msgs.length+'条短信';
-  $('chatCount').style.marginLeft='36px'; // 对齐调整
-  
-  // 移动端切换视图
-  if(window.innerWidth<=600){
-    $s('.chat-area').classList.add('show');
-    $s('.contact-list').style.display='none'; // 隐藏列表防止滚动冲突
-  }
-  
-  // 渲染消息，按日期分组
-  var h='';
-  var lastDay='';
-  msgs.forEach(m=>{
-    var day=m.t.substring(0,10);
-    if(day!==lastDay){
-      h+='<div class="chat-day"><span>'+day+'</span></div>';
-      lastDay=day;
-    }
-    var time=m.t.substring(11,16);
-    h+=`<div class="msg-bubble msg-in">
-      <div>${m.m}</div>
-      <span class="msg-time">${time}</span>
-    </div>`;
-  });
-  $('chatMessages').innerHTML=h;
-  // 滚动到底部
-  var chatBox=$('chatMessages');
-  requestAnimationFrame(()=>chatBox.scrollTop=chatBox.scrollHeight);
-}
-
-function backToList(){
-  $s('.chat-area').classList.remove('show');
-  setTimeout(()=>$s('.contact-list').style.display='block', 300); // 动画结束后显示列表
-}
-
-function saveFilter(){
-  var ls=$('ftList').value.split(/[,，\n]/).map(s=>s.trim()).filter(s=>s).join(',');
-  postJ('/filter',{
-    enabled: $('ftEn').value==='true',
-    whitelist: $('ftWl').value==='true',
-    numbers: ls.split(',') //后端兼容数组格式
-  }, d=>toast('已保存号码过滤设置'));
-}
-
-function saveContentFilter(){
-  var ls=$('cfList').value.split(/[,，\n]/).map(s=>s.trim()).filter(s=>s).join(',');
-  postJ('/contentfilter',{
-    enabled: $('cfEn').value==='true',
-    whitelist: $('cfWl').value==='true',
-    keywords: ls
-  }, d=>toast('已保存关键词过滤设置'));
-}
-
-function saveTimer(){
-  postJ('/timer',{
-    enabled: $('tmEn').value==='true',
-    type: +$('tmType').value,
-    interval: +$('tmInt').value,
-    phone: $('tmPh').value,
-    message: $('tmMsg').value
-  }, d=>toast('已保存定时任务'));
-}
-
-function saveAll(e){
-  e.preventDefault();
-  toast('正在保存配置...');
-  // 使用 URLSearchParams 而非 FormData（ESP32 处理更稳定）
-  var fd=new FormData(e.target);
-  var params=new URLSearchParams();
-  for(var p of fd.entries()){params.append(p[0],p[1])}
-  fetch('/save',{
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-    body:params.toString()
-  })
-  .then(r=>r.json()).then(d=>{
-    if(d.success){
-      toast('配置已保存');
-      if(d.needRestart && confirm('配置已保存成功！\n\n是否立即重启设备使配置生效？')){
-        toast('设备重启中...');
-        postJ('/restart',{},()=>{});
-        setTimeout(()=>location.reload(),3000);
-      }
-    }else{
-      toast(d.message||'保存失败');
-    }
-  }).catch(e=>{console.error(e);toast('保存失败，请检查网络')});
-  return false;
-}
-
-// 启动加载
-autoLoad();
-</script></body></html>)rawliteral";
-
-// 旧兼容
-const char* htmlToolsPage = htmlPage;
-
+function getAvatarColor(name){let hash=0;for(let i=0;i<name.length;i++)hash=name.charCodeAt(i)+((hash<<5)-hash);return colors[Math.abs(hash)%colors.length]}
+function xToggle(id){const e=$(id);e.value=String(e.value!=='true');$(id+'Sw').classList.toggle('on',e.value==='true');if(id==='smEn')$('smBox').style.display=e.value==='true'?'block':'none';if(id==='tmEn')updTmInfo()}
+function wfTog(i){const e=$('wfe'+i);e.value=String(e.value!=='true');$('wfs'+i).classList.toggle('on',e.value==='true')}
+function chTog(i){const e=$('che'+i);e.value=String(e.value!=='true');$('chs'+i).classList.toggle('on',e.value==='true')}
+function fd(i){const b=$('chb'+i),open=b.style.display==='none';b.style.display=open?'block':'none';$('chi'+i).style.transform=open?'rotate(90deg)':'rotate(0)'}
+function updTmInfo(){const en=$('tmEn').value==='true';$('tmBadge').className='badge '+(en?'b-ok':'b-wait');$('tmBadge').textContent=en?($('tmType').value==='0'?'Ping保活':'发送短信'):'未启用';$('tmInfo').textContent=en?'每 '+$('tmInt').value+' 天执行一次':'定时任务已禁用'}
+updTmInfo();hashTab();autoLoad();setInterval(refresh,15000);
+</script></body></html>)PAGE";
 #endif

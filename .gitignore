@@ -5,10 +5,19 @@ code/call_forward_private.h
 .vscode/
 *.code-workspace
 
+# 项目内隔离工具、依赖及缓存
+.tools/
+.arduino/
+
 # 编译产物
 build/
 *.bin
 *.elf
+
+# Python缓存及本机项目工作记录
+__pycache__/
+*.pyc
+.workbuddy/memory/
 
 # 系统文件
 .DS_Store

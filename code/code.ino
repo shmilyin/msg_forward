@@ -12,10 +12,8 @@
  * - sms_handler.ino   : 短信处理函数实现
  * - push_service.h    : 推送服务函数声明
  * - push_service.ino  : 推送服务函数实现
- * - mqtt_handler.h    : MQTT 处理函数声明
- * - mqtt_handler.ino  : MQTT 处理函数实现
+ * - airplane_mode.h/.ino : 飞行调度和射频恢复
  * - wifi_config.h     : WiFi 配置
- * - mqtt_config.h     : MQTT 配置
  */
 
 #include <Arduino.h>
@@ -33,6 +31,10 @@
 #include <HTTPClient.h>
 #include <base64.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
+#include <esp_system.h>
+#include <esp_heap_caps.h>
+#include <time.h>
 
 // 项目配置文件
 #include "wifi_config.h"
@@ -41,7 +43,7 @@
 #include "web_handlers.h"
 #include "sms_handler.h"
 #include "push_service.h"
-#include "mqtt_handler.h"
+#include "airplane_mode.h"
 
 // ========== 全局变量定义 ==========
 Config config;
@@ -55,42 +57,29 @@ WebServer server(80);
 bool configValid = false;
 unsigned long lastPrintTime = 0;
 unsigned long lastTimerExec = 0;
-unsigned long timerIntervalSec = 0;  // 使用秒避免溢出（支持到 136 年）
+unsigned long timerIntervalSec = 0;
+static uint64_t timerLastMs = 0;
+static bool timerPending = false;
+static unsigned long wifiRetryAt = 0;
+static bool watchdogReady = false;
+static unsigned long maxLoopMs = 0;
+static unsigned long diagnosticsAt = 0;
 
 char serialBuf[SERIAL_BUFFER_SIZE];
 int serialBufLen = 0;
 
 ConcatSms concatBuffer[MAX_CONCAT_MESSAGES];
 
-// ========== MQTT 全局变量 ==========
-WiFiClient mqttWifiClient;
-PubSubClient mqttClient(mqttWifiClient);
-
-String mqttDeviceId = "";
-// 用户自定义前缀主题
-String mqttTopicStatus = "";
-String mqttTopicSmsReceived = "";
-String mqttTopicSmsSent = "";
-String mqttTopicPingResult = "";
-String mqttTopicSmsSend = "";
-String mqttTopicPing = "";
-String mqttTopicCmd = "";
-// Home Assistant 自动发现主题
-String mqttHaStatusTopic = "";
-String mqttHaSmsReceivedTopic = "";
-
-unsigned long lastMqttReconnectAttempt = 0;
-unsigned long lastMqttStatusReport = 0;
-const unsigned long MQTT_RECONNECT_INTERVAL = 5000;
-const unsigned long MQTT_STATUS_INTERVAL = 60000;  // 每60秒上报一次状态
 
 // ========== setup 函数 ==========
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);
   Serial.begin(115200);
+  Serial.printf("复位原因: %d\n", (int)esp_reset_reason());
+  // RX缓冲大小必须在begin前设置；为网络短时阻塞预留缓冲。
+  Serial1.setRxBufferSize(8192);
   Serial1.begin(115200, SERIAL_8N1, RXD, TXD);
-  Serial1.setRxBufferSize(SERIAL_BUFFER_SIZE);
   
   // 初始化长短信缓存
   initConcatBuffer();
@@ -117,7 +106,10 @@ void setup() {
   }
   
   Serial.println("连接WiFi...");
-  while (WiFiMulti.run() != WL_CONNECTED) blink_short();
+  WiFi.setAutoReconnect(true);
+  unsigned long wifiStart = millis();
+  while (WiFiMulti.run(2000) != WL_CONNECTED && millis() - wifiStart < 15000) blink_short(50);
+  configTime(0, 0, "ntp.ntsc.ac.cn", "pool.ntp.org");
   Serial.printf("WiFi已连接: %s, IP: %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   
   // 启动 mDNS 服务
@@ -131,6 +123,7 @@ void setup() {
   
   // 启动 HTTP 服务器
   server.on("/", handleRoot);
+  server.on("/assets/app.css", HTTP_GET, handleAppCss);
   server.on("/save", HTTP_POST, handleSave);
   server.on("/tools", handleToolsPage);
   server.on("/sendsms", HTTP_POST, handleSendSms);
@@ -138,63 +131,27 @@ void setup() {
   server.on("/timer", HTTP_POST, handleTimer);
   server.on("/query", handleQuery);
   server.on("/restart", HTTP_POST, handleRestart);     // 重启
+  server.on("/history/clear", handleClearSmsHistory);
   server.on("/history", handleSmsHistory);             // 短信历史
   server.on("/stats", handleStats);                    // 统计信息
-  server.on("/filter", HTTP_POST, handleFilterSave);   // 号码过滤保存
-  server.on("/contentfilter", HTTP_POST, handleContentFilterSave);  // 内容过滤保存
+  server.on("/airplane", HTTP_GET, handleAirplaneStatus);
+  server.on("/airplane/save", HTTP_POST, handleAirplaneSave);
+  server.on("/airplane/action", HTTP_POST, handleAirplaneAction);
   server.begin();
   Serial.println("HTTP服务器已启动");
   
   ssl_client.setInsecure();
-  while (!sendATandWaitOK("AT", 1000)) {
-    Serial.println("AT未响应，重试...");
-    blink_short();
+  ssl_client.setHandshakeTimeout(3);
+  ssl_client.setConnectionTimeout(2000);
+  unsigned long modemStart = millis();
+  while (!sendATandWaitOK("AT", 1000) && millis() - modemStart < 10000) {
+    Serial.println("AT未响应，限时重试...");
+    blink_short(50);
   }
   Serial.println("模组AT响应正常");
   
-  // 清除APN配置，让模组自动识别（换卡后自动适配）
-  Serial.print("重置APN配置... ");
-  if (sendATandWaitOK("AT+CGDCONT=1,\"IP\",\"\"", 2000)) {
-    Serial.println("完成");
-  } else {
-    Serial.println("跳过");
-  }
-  
-  // 设置短信自动上报
-  Serial.println("设置短信自动上报(AT+CNMI)...");
-  int retryCount = 0;
-  while (!sendATandWaitOK("AT+CNMI=2,2,0,0,0", 2000)) {
-    blink_short();
-    if (++retryCount >= 10) {
-      Serial.println("警告: AT+CNMI 设置失败，跳过");
-      break;
-    }
-  }
-  if (retryCount < 10) Serial.println("AT+CNMI 设置成功");
-  
-  // 配置 PDU 模式
-  Serial.println("配置PDU模式(AT+CMGF=0)...");
-  retryCount = 0;
-  while (!sendATandWaitOK("AT+CMGF=0", 2000)) {
-    blink_short();
-    if (++retryCount >= 10) {
-      Serial.println("警告: AT+CMGF 设置失败，跳过");
-      break;
-    }
-  }
-  if (retryCount < 10) Serial.println("AT+CMGF 设置成功");
-  
-  // 等待 CGATT 附着
-  Serial.println("等待网络附着(CGATT)...");
-  retryCount = 0;
-  while (!waitCGATT1()) {
-    blink_short();
-    if (++retryCount >= 30) {  // 网络附着可能需要更长时间
-      Serial.println("警告: 网络附着超时，继续执行");
-      break;
-    }
-  }
-  if (retryCount < 30) Serial.println("网络已附着");
+  initAirplaneMode();
+  serviceAirplaneMode();
   
 
   Serial.println("模组初始化完成");
@@ -206,15 +163,6 @@ void setup() {
     sendEmailNotification("短信转发器已启动", body.c_str());
   }
   
-  // MQTT 初始化
-  initMqttTopics();
-  mqttClient.setCallback(mqttCallback);
-  mqttClient.setBufferSize(1024);
-  if (config.mqttEnabled && config.mqttServer.length() > 0) {
-    mqttClient.setServer(config.mqttServer.c_str(), config.mqttPort);
-    mqttReconnect();
-  }
-  
   // 启用看门狗 (30秒超时)
   // 适配 ESP32 Arduino Core v3.0+
   esp_task_wdt_config_t wdt_config = {
@@ -222,15 +170,32 @@ void setup() {
       .idle_core_mask = (1 << 0), // ESP32-C3 是单核，使用 core 0
       .trigger_panic = true
   };
-  esp_task_wdt_init(&wdt_config);
-  esp_task_wdt_add(NULL);
-  Serial.println("看门狗已启用(30s)");
+  esp_err_t wdtResult = esp_task_wdt_init(&wdt_config);
+  if (wdtResult == ESP_ERR_INVALID_STATE) wdtResult = esp_task_wdt_reconfigure(&wdt_config);
+  esp_err_t taskResult = esp_task_wdt_status(NULL);
+  if (taskResult != ESP_OK) taskResult = esp_task_wdt_add(NULL);
+  watchdogReady = wdtResult == ESP_OK && taskResult == ESP_OK;
+  Serial.printf("看门狗初始化: %d, 任务注册: %d\n", wdtResult, taskResult);
+  timerLastMs = esp_timer_get_time() / 1000ULL;
 }
 
 // ========== loop 函数 ==========
 void loop() {
+  unsigned long loopStarted = millis();
+  checkSerial1URC();
+  if (WiFi.status() != WL_CONNECTED && millis() - wifiRetryAt >= 30000) {
+    WiFiMulti.run(2000);
+    wifiRetryAt = millis();
+    if (WiFi.status() == WL_CONNECTED) {
+      MDNS.end();
+      if (MDNS.begin(MDNS_HOSTNAME)) MDNS.addService("http", "tcp", 80);
+      configTime(0, 0, "ntp.ntsc.ac.cn", "pool.ntp.org");
+    }
+  }
   // 处理 HTTP 请求
   server.handleClient();
+  if (watchdogReady) esp_task_wdt_reset();
+  checkSerial1URC();
   
   // 如果配置无效，每 30 秒打印一次提示
   if (!configValid) {
@@ -240,56 +205,62 @@ void loop() {
     }
   }
   
-  // 检查定时任务
+  serviceAirplaneMode();
+  if (watchdogReady) esp_task_wdt_reset();
+  // 飞行期间只保留一个到期标记，恢复后执行一次。
   if (config.timerEnabled && timerIntervalSec > 0 && configValid) {
-    unsigned long elapsedSec = (millis() - lastTimerExec) / 1000;
-    if (elapsedSec >= timerIntervalSec) {
+    uint64_t nowMs = esp_timer_get_time() / 1000ULL;
+    if (nowMs - timerLastMs >= (uint64_t)timerIntervalSec * 1000ULL) {
+      timerLastMs = nowMs;
       lastTimerExec = millis();
-      
+      timerPending = true;
+    }
+    if (timerPending && cellularReady()) {
+      timerPending = false;
       if (config.timerType == 0) {
-        if (sendATandWaitOK("AT+CGACT=1,1", 10000)) {
-          sendATandWaitOK("AT+MPING=1,\"8.8.8.8\",4,32,255", 30000);
-          delay(2000);
-          sendATandWaitOK("AT+CGACT=0,1", 5000);
-          publishMqttStatus("active_ping");
-        }
+        String result;
+        runModemPing("8.8.8.8", result);
       } else if (config.timerType == 1 && config.timerPhone.length() > 0) {
-        sendSMS(config.timerPhone.c_str(), config.timerMessage.c_str());
-        stats.smsSent++;
-        saveStats();
-        publishMqttSmsSent(config.timerPhone.c_str(), config.timerMessage.c_str(), true);
+        bool success = sendSMS(config.timerPhone.c_str(), config.timerMessage.c_str());
+        if (success) { stats.smsSent++; saveStats(); }
       }
     }
   }
   
-  // MQTT 处理
-  if (config.mqttEnabled && WiFi.status() == WL_CONNECTED) {
-    if (!mqttClient.connected()) {
-      unsigned long now = millis();
-      if (now - lastMqttReconnectAttempt > MQTT_RECONNECT_INTERVAL) {
-        lastMqttReconnectAttempt = now;
-        mqttReconnect();
-      }
-    } else {
-      mqttClient.loop();
-      
-      unsigned long now = millis();
-      if (now - lastMqttStatusReport > MQTT_STATUS_INTERVAL) {
-        lastMqttStatusReport = now;
-        publishMqttDeviceStatus();
-      }
-    }
-  }
-  
+  if (watchdogReady) esp_task_wdt_reset();
+  checkSerial1URC();
   // 检查长短信超时
   checkConcatTimeout();
   
-  // 本地透传
-  if (Serial.available()) Serial1.write(Serial.read());
+  // 本地按行查询共享AT事务，避免原始字节破坏CMGS/CFUN事务。
+  static String consoleLine;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      consoleLine.trim();
+      if (consoleLine == "AT" || consoleLine == "ATI" || consoleLine == "AT+CFUN?" ||
+          consoleLine == "AT+CPIN?" || consoleLine == "AT+CEREG?" || consoleLine == "AT+CGATT?")
+        Serial.println(sendATCommand(consoleLine.c_str(), 1500));
+      else Serial.println("串口仅允许只读查询；射频和短信请使用认证页面");
+      consoleLine = String();
+    } else if (c != '\r' && consoleLine.length() < 80) consoleLine += c;
+  }
   
   // 检查 URC 和解析
   checkSerial1URC();
   
-  // 喂狗
-  esp_task_wdt_reset();
+  if (watchdogReady) esp_task_wdt_reset();
+  processNotifications();
+  checkSerial1URC();
+  unsigned long loopMs = millis() - loopStarted;
+  if (loopMs > maxLoopMs) maxLoopMs = loopMs;
+  if (millis() - diagnosticsAt >= 60000) {
+    diagnosticsAt = millis();
+    Serial.printf("health uptime=%llu heap=%u min_heap=%u largest=%u max_loop_ms=%lu queue=%u dropped=%lu\n",
+      (unsigned long long)(esp_timer_get_time() / 1000000ULL), (unsigned int)ESP.getFreeHeap(), (unsigned int)ESP.getMinFreeHeap(),
+      (unsigned int)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT), maxLoopMs,
+      notificationQueueDepth(), notificationDropCount());
+  }
+  if (watchdogReady) esp_task_wdt_reset();
+  delay(1);
 }

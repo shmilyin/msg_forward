@@ -1,0 +1,53 @@
+{
+  "arduino_cli": "1.2.2",
+  "core": "esp32:esp32@3.3.0",
+  "fqbn": "esp32:esp32:esp32c3:PartitionScheme=huge_app",
+  "libraries": {
+    "ReadyMail": "0.4.2",
+    "pdulib": "0.5.11"
+  },
+  "host": {
+    "package": "w64devkit-x64-2.4.0",
+    "gcc": "15.2.0",
+    "sha256": "80678c29a56982d7d3b342f12a0060157df5654c38d82d4adc40704070d6aafb",
+    "compiler": ".tools/w64devkit/bin/g++.exe"
+  },
+  "paths": {
+    "cli": ".tools/arduino-cli/arduino-cli.exe",
+    "data": ".arduino/data",
+    "downloads": ".arduino/downloads",
+    "user": ".arduino/user",
+    "libraries": ".arduino/user/libraries",
+    "core": ".arduino/data/packages/esp32/hardware/esp32/3.3.0",
+    "build": "build/esp32c3",
+    "log": "build/compile.log"
+  },
+  "commands": [
+    "python build.py setup",
+    "python build.py prefetch",
+    "python build.py host",
+    "python build.py versions",
+    "python build.py compile"
+  ],
+  "api": {
+    "SMTPClient": {
+      "source": ".arduino/user/libraries/ReadyMail/src/smtp/SMTPClient.h",
+      "connect": "bool connect(const String &host, uint16_t port, SMTPResponseCallback responseCallback = NULL, bool ssl = true, bool await = true)",
+      "authenticate": "bool authenticate(const String &email, const String &param, readymail_auth_type auth, bool await = true)",
+      "send": "bool send(SMTPMessage &message, const String &notify = \"\", bool await = true)",
+      "disconnect": "void stop(); bool logout(bool await = true); 没有 disconnect()",
+      "timeout": "没有公开超时 setter。私有 smtp_ctx.options.timeout 默认 con=3000、send=30000、read=120000，单位毫秒；send 字段不代表已验证的发送总时限。",
+      "behavior": "连接后调用底层 Client::setTimeout(120000)。内部连接计时器不能中断底层同步 connect。await=false 需要调用 loop()，也不保证底层 TCP/TLS 建连非阻塞。"
+    },
+    "NetworkClient": {
+      "source": ".arduino/data/packages/esp32/hardware/esp32/3.3.0/libraries/Network/src/NetworkClient.h",
+      "connection_timeout": "void setConnectionTimeout(uint32_t milliseconds)",
+      "connect": "int connect(const char *host, uint16_t port, int32_t timeout_ms); IPAddress 重载同样支持 timeout_ms",
+      "stream_timeout": "继承 Stream::setTimeout(unsigned long timeout)，单位毫秒，默认 1000；它不同于连接超时。"
+    },
+    "NetworkClientSecure": {
+      "source": ".arduino/data/packages/esp32/hardware/esp32/3.3.0/libraries/NetworkClientSecure/src/NetworkClientSecure.cpp",
+      "handshake_timeout": "void setHandshakeTimeout(unsigned long handshake_timeout)，单位秒，实现乘以 1000；默认 TLS 握手为 120000 ms。"
+    }
+  }
+}

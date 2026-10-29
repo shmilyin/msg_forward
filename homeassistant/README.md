@@ -1,4 +1,7 @@
-# Home Assistant 集成说明
+# Home Assistant 集成说明（legacy归档）
+
+> 2026-10-28起，当前固件已完全移除MQTT/Home Assistant。本目录仅供旧版本参考，以下步骤不适用于当前固件。设备不会主动删除外部Broker上的retained发现配置或实体；需要时由管理员在Broker/HA中清理。旧NVS键保留但不再读写。
+
 
 本目录提供 Home Assistant 的配置文件和蓝图，让你可以：
 - 📊 在 HA 仪表板显示设备状态、信号强度

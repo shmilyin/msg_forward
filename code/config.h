@@ -21,7 +21,8 @@ enum PushType {
   PUSH_TYPE_CUSTOM = 4,    // 自定义模板
   PUSH_TYPE_TELEGRAM = 5,  // Telegram Bot
   PUSH_TYPE_WECOM = 6,     // 企业微信机器人
-  PUSH_TYPE_DINGTALK = 7   // 钉钉机器人
+  PUSH_TYPE_DINGTALK = 7,  // 钉钉机器人
+  PUSH_TYPE_FEISHU = 8     // 飞书群聊机器人
 };
 
 // 最大推送通道数
@@ -29,9 +30,6 @@ enum PushType {
 
 // 短信历史记录设置
 #define MAX_SMS_HISTORY 100
-
-// 黑白名单设置
-#define MAX_FILTER_NUMBERS 100  // 扩容到100个
 
 // 推送通道配置
 struct PushChannel {
@@ -42,14 +40,6 @@ struct PushChannel {
   String key1;
   String key2;
   String customBody;
-};
-
-// 短信历史记录结构 (旧结构保留，实际上改用 SPIFFS)
-struct SmsRecord {
-  String sender;
-  String message;
-  String timestamp;
-  bool valid;
 };
 
 // 统计计数器结构
@@ -92,29 +82,10 @@ struct Config {
   String timerPhone;
   String timerMessage;
   
-  // MQTT 配置
-  bool mqttEnabled;
-  bool mqttControlOnly;
-  String mqttServer;
-  int mqttPort;
-  String mqttUser;
-  String mqttPass;
-  String mqttPrefix;
-  
-  // Home Assistant MQTT 自动发现
-  bool mqttHaDiscovery;     // 启用 HA 自动发现
-  String mqttHaPrefix;      // HA 发现前缀，默认 "homeassistant"
-  
-  // 黑白名单配置（按号码过滤）
-  bool filterEnabled;          // 是否启用过滤
-  bool filterIsWhitelist;      // true=白名单, false=黑名单
-  // 使用单个长字符串存储，内存中逗号分隔，避免定义大数组占用栈空间
-  String filterList;  
-  
-  // 内容关键词过滤
-  bool contentFilterEnabled;      // 是否启用内容过滤
-  bool contentFilterIsWhitelist;  // true=白名单(只转发包含关键词的), false=黑名单(拦截包含关键词的)
-  String contentFilterList;       // 关键词列表，逗号分隔
+  bool airplaneEnabled;
+  int airplaneStartMinute;
+  int airplaneEndMinute;
+  bool airplaneManualTarget;
 };
 
 // 默认Web管理账号密码
@@ -159,8 +130,6 @@ extern char serialBuf[SERIAL_BUFFER_SIZE];
 extern int serialBufLen;
 
 // 短信历史和统计
-extern SmsRecord smsHistory[MAX_SMS_HISTORY];
-extern int smsHistoryIndex;
 extern Statistics stats;
 
 // 函数声明
@@ -171,11 +140,9 @@ bool isConfigValid();
 String getDeviceUrl();
 void initSmsStorage();
 void addSmsToHistory(const char* sender, const char* message, const char* timestamp);
-String getSmsHistory();
-String normalizePhoneNumber(const String& rawNumber);
-bool phoneNumbersMatch(const String& senderNum, const String& filterNum);
-bool isNumberFiltered(const char* number);
-bool isContentFiltered(const char* content);
+void streamSmsHistory();
+void recoverSmsStorage();
+bool clearSmsHistory();
 void saveStats();
 void loadStats();
 

@@ -7,13 +7,18 @@ void handleQuery() {
   if (!checkAuth()) return;
   
   String type = server.arg("type");
+  if (type != "wifi" && !cellularReady()) {
+    server.send(409, "application/json", "{\"success\":false,\"message\":\"" + jsonEscape(cellularBlockReason()) + "\"}"); return;
+  }
+  ATTransaction transaction;
+  if (!transaction) { server.send(409, "text/plain", "模组事务忙碌"); return; }
   String json = "{";
   bool success = false;
   String message = "";
   
   if (type == "ati") {
     // 固件信息查询
-    String resp = sendATCommand("ATI", 2000);
+    String resp = transactionATCommand("ATI", 2000);
     Serial.println("ATI响应: " + resp);
     
     if (resp.indexOf("OK") >= 0) {
@@ -39,9 +44,9 @@ void handleQuery() {
       }
       
       message = "<table class='info-table'>";
-      message += "<tr><td>制造商</td><td>" + manufacturer + "</td></tr>";
-      message += "<tr><td>模组型号</td><td>" + model + "</td></tr>";
-      message += "<tr><td>固件版本</td><td>" + version + "</td></tr>";
+      message += "<tr><td>制造商</td><td>" + htmlEscape(manufacturer) + "</td></tr>";
+      message += "<tr><td>模组型号</td><td>" + htmlEscape(model) + "</td></tr>";
+      message += "<tr><td>固件版本</td><td>" + htmlEscape(version) + "</td></tr>";
       message += "</table>";
     } else {
       message = "查询失败";
@@ -49,7 +54,7 @@ void handleQuery() {
   }
   else if (type == "signal") {
     // 信号质量查询
-    String resp = sendATCommand("AT+CESQ", 2000);
+    String resp = transactionATCommand("AT+CESQ", 2000);
     Serial.println("CESQ响应: " + resp);
     
     if (resp.indexOf("+CESQ:") >= 0) {
@@ -99,7 +104,7 @@ void handleQuery() {
       message = "<table class='info-table'>";
       message += "<tr><td>信号强度 (RSRP)</td><td>" + rsrpStr + "</td></tr>";
       message += "<tr><td>信号质量 (RSRQ)</td><td>" + rsrqStr + "</td></tr>";
-      message += "<tr><td>原始数据</td><td>" + params + "</td></tr>";
+      message += "<tr><td>原始数据</td><td>" + htmlEscape(params) + "</td></tr>";
       message += "</table>";
     } else {
       message = "查询失败";
@@ -110,7 +115,7 @@ void handleQuery() {
     success = true;
     message = "<table class='info-table'>";
     
-    String resp = sendATCommand("AT+CIMI", 2000);
+    String resp = transactionATCommand("AT+CIMI", 2000);
     String imsi = "未知";
     if (resp.indexOf("OK") >= 0) {
       int start = resp.indexOf('\n');
@@ -126,7 +131,7 @@ void handleQuery() {
     }
     message += "<tr><td>IMSI</td><td>" + imsi + "</td></tr>";
     
-    resp = sendATCommand("AT+ICCID", 2000);
+    resp = transactionATCommand("AT+ICCID", 2000);
     String iccid = "未知";
     if (resp.indexOf("+ICCID:") >= 0) {
       int idx0 = resp.indexOf("+ICCID:");
@@ -138,7 +143,7 @@ void handleQuery() {
     }
     message += "<tr><td>ICCID</td><td>" + iccid + "</td></tr>";
     
-    resp = sendATCommand("AT+CNUM", 2000);
+    resp = transactionATCommand("AT+CNUM", 2000);
     String phoneNum = "未存储或不支持";
     if (resp.indexOf("+CNUM:") >= 0) {
       int idx0 = resp.indexOf(",\"");
@@ -157,7 +162,7 @@ void handleQuery() {
     success = true;
     message = "<table class='info-table'>";
     
-    String resp = sendATCommand("AT+CEREG?", 2000);
+    String resp = transactionATCommand("AT+CEREG?", 2000);
     String regStatus = "未知";
     if (resp.indexOf("+CEREG:") >= 0) {
       int idx0 = resp.indexOf("+CEREG:");
@@ -179,7 +184,7 @@ void handleQuery() {
     }
     message += "<tr><td>网络注册</td><td>" + regStatus + "</td></tr>";
     
-    resp = sendATCommand("AT+COPS?", 2000);
+    resp = transactionATCommand("AT+COPS?", 2000);
     String oper = "未知";
     if (resp.indexOf("+COPS:") >= 0) {
       int idx0 = resp.indexOf(",\"");
@@ -190,9 +195,9 @@ void handleQuery() {
         }
       }
     }
-    message += "<tr><td>运营商</td><td>" + oper + "</td></tr>";
+    message += "<tr><td>运营商</td><td>" + htmlEscape(oper) + "</td></tr>";
     
-    resp = sendATCommand("AT+CGACT?", 2000);
+    resp = transactionATCommand("AT+CGACT?", 2000);
     String pdpStatus = "未激活";
     if (resp.indexOf("+CGACT: 1,1") >= 0) {
       pdpStatus = "已激活";
@@ -201,7 +206,7 @@ void handleQuery() {
     }
     message += "<tr><td>数据连接</td><td>" + pdpStatus + "</td></tr>";
     
-    resp = sendATCommand("AT+CGDCONT?", 2000);
+    resp = transactionATCommand("AT+CGDCONT?", 2000);
     String apn = "未知";
     if (resp.indexOf("+CGDCONT:") >= 0) {
       int idx0 = resp.indexOf(",\"");
@@ -216,7 +221,7 @@ void handleQuery() {
         }
       }
     }
-    message += "<tr><td>APN</td><td>" + apn + "</td></tr>";
+    message += "<tr><td>APN</td><td>" + htmlEscape(apn) + "</td></tr>";
     message += "</table>";
   }
   else if (type == "wifi") {
@@ -229,7 +234,7 @@ void handleQuery() {
     
     String ssid = WiFi.SSID();
     if (ssid.length() == 0) ssid = "未知";
-    message += "<tr><td>当前SSID</td><td>" + ssid + "</td></tr>";
+    message += "<tr><td>当前SSID</td><td>" + htmlEscape(ssid) + "</td></tr>";
     
     int rssi = WiFi.RSSI();
     String rssiStr = String(rssi) + " dBm";
@@ -255,7 +260,7 @@ void handleQuery() {
   }
   
   json += "\"success\":" + String(success ? "true" : "false") + ",";
-  json += "\"message\":\"" + message + "\"";
+  json += "\"message\":\"" + jsonEscape(message) + "\"";
   json += "}";
   
   server.send(200, "application/json", json);
@@ -265,151 +270,11 @@ void handleQuery() {
 void handlePing() {
   if (!checkAuth()) return;
   
-  Serial.println("网页端发起Ping请求");
-  
-  while (Serial1.available()) Serial1.read();
-  
-  Serial.println("激活数据连接...");
-  String activateResp = sendATCommand("AT+CGACT=1,1", 10000);
-  Serial.println("CGACT响应: " + activateResp);
-  
-  bool networkActivated = (activateResp.indexOf("OK") >= 0);
-  if (!networkActivated) {
-    Serial.println("数据连接激活失败，尝试继续执行...");
-  }
-  
-  while (Serial1.available()) Serial1.read();
-  delay(500);
-  
-  Serial1.println("AT+MPING=\"8.8.8.8\",30,1");
-  
-  unsigned long start = millis();
-  String resp = "";
-  bool gotOK = false;
-  bool gotError = false;
-  bool gotPingResult = false;
-  String pingResultMsg = "";
-  
-  while (millis() - start < 35000) {
-    while (Serial1.available()) {
-      char c = Serial1.read();
-      resp += c;
-      Serial.print(c);
-      
-      if (resp.indexOf("OK") >= 0 && !gotOK) {
-        gotOK = true;
-      }
-      
-      if (resp.indexOf("+CME ERROR") >= 0 || resp.indexOf("ERROR") >= 0) {
-        gotError = true;
-        pingResultMsg = "模组返回错误";
-        break;
-      }
-      
-      int mpingIdx = resp.indexOf("+MPING:");
-      if (mpingIdx >= 0) {
-        int lineEnd = resp.indexOf('\n', mpingIdx);
-        if (lineEnd >= 0) {
-          String mpingLine = resp.substring(mpingIdx, lineEnd);
-          mpingLine.trim();
-          Serial.println("收到MPING结果: " + mpingLine);
-          
-          int colonIdx = mpingLine.indexOf(':');
-          if (colonIdx >= 0) {
-            String params = mpingLine.substring(colonIdx + 1);
-            params.trim();
-            
-            int commaIdx = params.indexOf(',');
-            String resultStr;
-            if (commaIdx >= 0) {
-              resultStr = params.substring(0, commaIdx);
-            } else {
-              resultStr = params;
-            }
-            resultStr.trim();
-            int result = resultStr.toInt();
-            
-            gotPingResult = true;
-            
-            bool pingSuccess = (result == 0 || result == 1) || (params.indexOf(',') >= 0 && params.length() > 5);
-            
-            if (pingSuccess) {
-              int idx1 = params.indexOf(',');
-              if (idx1 >= 0) {
-                String rest = params.substring(idx1 + 1);
-                String ip;
-                int idx2;
-                if (rest.startsWith("\"")) {
-                  int quoteEnd = rest.indexOf('"', 1);
-                  if (quoteEnd >= 0) {
-                    ip = rest.substring(1, quoteEnd);
-                    idx2 = rest.indexOf(',', quoteEnd);
-                  } else {
-                    idx2 = rest.indexOf(',');
-                    ip = rest.substring(0, idx2);
-                  }
-                } else {
-                  idx2 = rest.indexOf(',');
-                  ip = rest.substring(0, idx2);
-                }
-                
-                if (idx2 >= 0) {
-                  rest = rest.substring(idx2 + 1);
-                  int idx3 = rest.indexOf(',');
-                  if (idx3 >= 0) {
-                    rest = rest.substring(idx3 + 1);
-                    int idx4 = rest.indexOf(',');
-                    String timeStr, ttlStr;
-                    if (idx4 >= 0) {
-                      timeStr = rest.substring(0, idx4);
-                      ttlStr = rest.substring(idx4 + 1);
-                    } else {
-                      timeStr = rest;
-                      ttlStr = "N/A";
-                    }
-                    timeStr.trim();
-                    ttlStr.trim();
-                    pingResultMsg = "目标: " + ip + ", 延迟: " + timeStr + "ms, TTL: " + ttlStr;
-                  }
-                }
-              }
-              if (pingResultMsg.length() == 0) {
-                pingResultMsg = "Ping成功";
-              }
-            } else {
-              pingResultMsg = "Ping超时或目标不可达 (错误码: " + String(result) + ")";
-            }
-            break;
-          }
-        }
-      }
-    }
-    
-    if (gotError || gotPingResult) break;
-    delay(10);
-  }
-  
-  Serial.println("\nPing操作完成");
-  
-  Serial.println("关闭数据连接...");
-  String deactivateResp = sendATCommand("AT+CGACT=0,1", 5000);
-  Serial.println("CGACT关闭响应: " + deactivateResp);
-  
-  String json = "{";
-  if (gotPingResult && pingResultMsg.indexOf("延迟") >= 0) {
-    json += "\"success\":true,";
-    json += "\"message\":\"" + pingResultMsg + "\"";
-  } else if (gotError) {
-    json += "\"success\":false,";
-    json += "\"message\":\"" + pingResultMsg + "\"";
-  } else if (gotPingResult) {
-    json += "\"success\":false,";
-    json += "\"message\":\"" + pingResultMsg + "\"";
-  } else {
-    json += "\"success\":false,";
-    json += "\"message\":\"操作超时，未收到Ping结果\"";
-  }
-  json += "}";
+  String host = server.hasArg("host") ? server.arg("host") : String("8.8.8.8");
+  String result;
+  bool success = runModemPing(host, result);
+  String json = "{\"success\":" + String(success ? "true" : "false") +
+                ",\"message\":\"" + jsonEscape(result) + "\"}";
   
   server.send(200, "application/json", json);
 }

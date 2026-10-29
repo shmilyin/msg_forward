@@ -10,6 +10,7 @@ extern WebServer server;
 // Web 页面处理
 bool checkAuth();
 void handleRoot();
+void handleAppCss();
 void handleToolsPage();
 void handleQuery();
 void handleSendSms();
@@ -20,14 +21,19 @@ void handleSave();
 // 新功能
 void handleRestart();
 void handleSmsHistory();
+void handleClearSmsHistory();
 void handleStats();
-void handleFilterSave();
-void handleContentFilterSave();
+String htmlEscape(const String& text);
 
 // AT 命令
 String sendATCommand(const char* cmd, unsigned long timeout);
 bool sendATandWaitOK(const char* cmd, unsigned long timeout);
 bool waitCGATT1();
+bool atResponseOK(const String& response);
+bool atErrorLine(const String& line);
+String waitATResponse(unsigned long timeout, bool prompt, bool ping);
+bool validPingHost(const String& host);
+bool runModemPing(const String& host, String& result);
 void blink_short(unsigned long gap_time = 500);
 
 #endif
