@@ -43,16 +43,19 @@ class String {
  friend bool operator==(const String&a,const String&b){return a.s==b.s;}
  friend bool operator!=(const String&a,const String&b){return !(a==b);}
 };
-unsigned long clockMs=0, yields=0;
+unsigned long clockMs=0, yields=0, wdtFeeds=0, lastWdtAt=0;
+bool watchdogReady=true;
+void esp_task_wdt_reset(){++wdtFeeds;lastWdtAt=clockMs;}
+std::function<void()> onTick;
 unsigned long millis(){return clockMs;}
-void yield(){++yields;++clockMs;} void delay(unsigned long n){clockMs+=n;++yields;}
+void yield(){++yields;++clockMs;if(onTick)onTick();} void delay(unsigned long n){clockMs+=n;++yields;if(onTick)onTick();}
 struct HardwareSerial {
- std::deque<char> rx; bool flood=false; std::function<void(String)> onCommand; String tx;
+ std::deque<char> rx; bool flood=false,autoSubmit=true; std::function<void(String)> onCommand; String tx;
  int available(){return flood||!rx.empty();} int read(){if(!rx.empty()){char c=rx.front();rx.pop_front();return (unsigned char)c;}return flood?'X':-1;}
  void feed(const std::string&s){for(char c:s)rx.push_back(c);}
  void println(const String&s){if(s=="AT+CGACT?"){feed("+CGACT: 1,0\nOK\n");return;}if(onCommand)onCommand(s);} void println(){}
  void print(const String& value){tx+=value;} template<class... T>void printf(const char*,T...){}
- void write(int c){if(c==26)feed("\r\n+CMT: ,2\r\nAABB\r\n+CMGS: 1\r\nOK\r\n");}
+ void write(int c){if(c==26&&autoSubmit)feed("\r\n+CMT: ,2\r\nAABB\r\n+CMGS: 1\r\nOK\r\n");}
 } Serial1, Serial;
 #define MAX_CONCAT_MESSAGES 5
 #define MAX_CONCAT_PARTS 10
@@ -76,7 +79,7 @@ void markATTimeout();
 String transactionATCommand(const char*,unsigned long);
 '''
 tests = r'''
-void resetRx(){atTimedOut=false;Serial1.flood=false;Serial1.rx.clear();Serial1.feed("\n");readModemLine(false);waitingSmsPdu=false;smsPduCount=0;smsPduHead=0;Serial1.onCommand=nullptr;}
+void resetRx(){atTimedOut=false;Serial1.flood=false;Serial1.rx.clear();Serial1.feed("\n");readModemLine(false);waitingSmsPdu=false;smsPduCount=0;smsPduHead=0;Serial1.onCommand=nullptr;Serial1.autoSubmit=true;onTick=nullptr;smsResultUnknown=false;}
 int main(){
  initConcatBuffer();
  assert(findOrCreateConcatSlot(1,"x",11)==-1);
@@ -98,7 +101,8 @@ int main(){
  checkSerial1URC();assert(processed==1&&pdu.decodes==1);
  resetRx();Serial1.feed("+CMT: ,2\r\nAA");while(Serial1.available())dispatchModemURC(readModemLine(false));
  Serial1.onCommand=[](String){Serial1.feed("BB\r\nOK\r\n");};assert(atResponseOK(sendATCommand("ATI",200)));assert(smsPduCount==1);
- resetRx();for(int i=0;i<9;i++){dispatchModemURC("+CMT: ,2");dispatchModemURC("AABB");}assert(smsPduCount==8);
+ resetRx();unsigned long drops=smsPduDropCount();for(int i=0;i<35;i++){dispatchModemURC("+CMT: ,2");dispatchModemURC("AABB");}assert(smsPduCount==32&&smsPduDropCount()==drops+3);
+ {ATTransaction owner;int decoded=pdu.decodes;checkSerial1URC();assert(pdu.decodes==decoded&&smsPduCount==32);}
  resetRx();Serial1.onCommand=[](String){Serial1.feed(std::string(600,'X')+"OK\nERROR\n");};r=sendATCommand("ATI",300);assert(!atResponseOK(r));assert(r.indexOf("ERROR")>=0);
  resetRx();Serial1.onCommand=[](String){for(int i=0;i<100;i++)Serial1.feed(std::string(100,'A')+"\n");Serial1.feed("OK\n");};r=sendATCommand("ATI",1000);assert(r.length()<=2048&&atResponseOK(r));
  resetRx();Serial1.flood=true;unsigned long begin=clockMs,y=yields;r=sendATCommand("ATI",100);assert(clockMs-begin<=125&&yields>y);resetRx();
@@ -121,6 +125,21 @@ int main(){
  resetRx();begin=clockMs;assert(!sendSMS("123","hello"));assert(clockMs-begin>=5000&&clockMs-begin<=5050);
  resetRx();pdu.info[1]=0;pdu.info[2]=0;Serial1.onCommand=[](String){Serial1.feed("OK\n+CMT: ,2\nAABB\n");};assert(atResponseOK(sendATCommand("ATI",200)));assert(smsPduCount==0);before=processed;checkSerial1URC();assert(processed==before+1);
  resetRx();Serial1.flood=true;begin=clockMs;checkSerial1URC();assert(clockMs-begin<=12);resetRx();
+ for(unsigned long latency: {12000UL,20000UL}) {
+  resetRx();Serial1.autoSubmit=false;Serial1.onCommand=[](String){Serial1.feed(">\n");};
+  begin=clockMs;unsigned long feeds=wdtFeeds;bool delivered=false;
+  onTick=[&](){if(!delivered&&clockMs-begin>=latency){delivered=true;Serial1.feed("+CMT: ,2\nAABB\n+CMGS: 7\nOK\n");}};
+  before=processed;assert(sendSMS("123","hello"));assert(clockMs-begin>=latency&&clockMs-begin<latency+100);
+  assert(wdtFeeds>feeds&&clockMs-lastWdtAt<1100&&processed==before&&smsPduCount==1);
+ }
+ resetRx();Serial1.autoSubmit=false;Serial1.onCommand=[](String){Serial1.feed(">\n");};
+ begin=clockMs;assert(!sendSMS("123","hello"));assert(clockMs-begin>=30000&&clockMs-begin<30100&&smsSendResultUnknown());
+ begin=clockMs;assert(!sendSMS("123","hello")&&clockMs==begin);
+ resetRx();Serial1.autoSubmit=false;Serial1.onCommand=[](String){Serial1.feed(">\n+CMS ERROR: 500\n");};assert(!sendSMS("123","hello")&&!smsSendResultUnknown());
+ resetRx();Serial1.autoSubmit=false;Serial1.onCommand=[](String){Serial1.feed(">\n");Serial1.flood=true;};begin=clockMs;unsigned long oldYields=yields;
+ assert(!sendSMS("123","hello"));assert(clockMs-begin>=30000&&clockMs-begin<30100&&yields>oldYields&&smsSendResultUnknown());resetRx();
+ clockMs=~0UL-15000;Serial1.autoSubmit=false;Serial1.onCommand=[](String){Serial1.feed(">\nOK\n");};begin=clockMs;
+ assert(!sendSMS("123","hello"));assert((unsigned long)(clockMs-begin)>=30000&&smsSendResultUnknown());resetRx();
  std::cout<<"PASS: actual AT/SMS functions, URC queue, bounds, flood timeout, wrap, timestamp, ping, sendSMS\n";
 }
 '''

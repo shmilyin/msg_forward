@@ -139,6 +139,8 @@ bool isPushChannelValid(const PushChannel& ch);
 bool isConfigValid();
 String getDeviceUrl();
 void initSmsStorage();
+bool smsStorageReady();
+bool initializeSmsStorage(const String& confirmation);
 void addSmsToHistory(const char* sender, const char* message, const char* timestamp);
 void streamSmsHistory();
 void recoverSmsStorage();

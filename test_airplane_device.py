@@ -36,14 +36,16 @@ bool checkAuth(){if(!server.authenticated){server.code=401;return false;}return 
 String jsonEscape(const String& s){return s;}
 '''
 tests = r'''
-int physical=1;bool failSet=false,failCNMI=false,unknown=false,mismatch=false,timeoutSet=false;int sets=0;
-void fixture(){clockMs=0;atTimedOut=false;Serial1.rx.clear();Serial1.feed("\n");readModemLine(false);physical=1;failSet=failCNMI=unknown=mismatch=timeoutSet=false;sets=0;config.airplaneEnabled=false;config.airplaneManualTarget=false;server.params.clear();server.authenticated=true;initAirplaneMode();
+int physical=1;bool failSet=false,failCNMI=false,unknown=false,mismatch=false,timeoutSet=false,failApn=false;int sets=0,apns=0,cmgfs=0,cnmis=0;String regResponse="+CEREG: 2,1\nOK\n";
+void fixture(){clockMs=0;atTimedOut=false;Serial1.rx.clear();Serial1.feed("\n");readModemLine(false);physical=1;failSet=failCNMI=unknown=mismatch=timeoutSet=false;sets=apns=cmgfs=cnmis=0;failApn=false;epoch=1800000000;regResponse="+CEREG: 2,1\nOK\n";config.airplaneEnabled=false;config.airplaneManualTarget=false;server.params.clear();server.authenticated=true;initAirplaneMode();
  Serial1.onCommand=[](String cmd){
   if(cmd=="AT+CFUN?")Serial1.feed(unknown?"OK\n":physical==4?"+CFUN: 4\nOK\n":"+CFUN: 1\nOK\n");
   else if(cmd.startsWith("AT+CFUN=")){++sets;if(!failSet&&!mismatch)physical=cmd=="AT+CFUN=4"?4:1;if(!timeoutSet)Serial1.feed(failSet?"ERROR\n":"OK\n");}
-  else if(cmd=="AT+CNMI=2,2,0,0,0")Serial1.feed(failCNMI?"ERROR\n":"OK\n");
+  else if(cmd=="AT+CNMI=2,2,0,0,0"){++cnmis;Serial1.feed(failCNMI?"ERROR\n":"OK\n");}
+  else if(cmd=="AT+CMGF=0"){++cmgfs;Serial1.feed("OK\n");}
+  else if(cmd=="AT+CGDCONT=1,\"IP\",\"\""){++apns;Serial1.feed(failApn?"ERROR\n":"OK\n");}
   else if(cmd=="AT+CPIN?")Serial1.feed("+CPIN: READY\nOK\n");
-  else if(cmd=="AT+CEREG?")Serial1.feed("+CEREG: 2,1\nOK\n");
+  else if(cmd=="AT+CEREG?")Serial1.feed(regResponse.s);
   else if(cmd=="AT+CGATT?")Serial1.feed("+CGATT: 1\nOK\n");
   else Serial1.feed("OK\n");
  };
@@ -58,6 +60,25 @@ int main(){
  fixture();config.airplaneManualTarget=true;timeoutSet=true;serviceAirplaneMode();assert(physical==4&&airActual==4&&airError.length()==0);
  fixture();unknown=true;failSet=true;serviceAirplaneMode();assert(airActual==-1&&!cellularReady());
  fixture();config.airplaneEnabled=true;epoch=0;serviceAirplaneMode();assert(!airSchedule.targetKnown&&sets==0&&!cellularReady());
+ assert(cmgfs==1&&cnmis==1&&apns==0&&physical==1);
+ clockMs+=15000;serviceAirplaneMode();assert(cmgfs==1&&cnmis==1&&apns==0&&sets==0);
+ epoch=1800000000;config.airplaneEnabled=false;clockMs+=15000;serviceAirplaneMode();assert(apns==1&&cellularReady());
+ clockMs+=15000;serviceAirplaneMode();assert(apns==1);
+ config.airplaneManualTarget=true;airAttempted=false;serviceAirplaneMode();int previousSets=sets;
+ physical=1;serviceAirplaneMode();assert(sets==previousSets);clockMs=airRetryAt;serviceAirplaneMode();assert(physical==4&&sets==previousSets+1);
+ config.airplaneManualTarget=false;airAttempted=false;serviceAirplaneMode();assert(apns==1&&cmgfs==2&&cellularReady());
+ fixture();failApn=true;serviceAirplaneMode();assert(apns==1&&airSmsReady&&airRestoring&&!cellularReady());
+ serviceAirplaneMode();assert(apns==1);clockMs=airRetryAt;serviceAirplaneMode();assert(apns==2&&cmgfs==1);
+ failApn=false;clockMs=airRetryAt;serviceAirplaneMode();assert(apns==3&&cellularReady());clockMs+=15000;serviceAirplaneMode();assert(apns==3);
+ fixture();config.airplaneEnabled=true;epoch=0;failCNMI=true;serviceAirplaneMode();assert(!airSmsReady&&airError.length()&&apns==0&&sets==0);
+ failCNMI=false;clockMs=airRetryAt;serviceAirplaneMode();assert(airSmsReady&&apns==0&&sets==0);
+ fixture();config.airplaneEnabled=true;epoch=0;physical=4;serviceAirplaneMode();assert(cmgfs==0&&apns==0&&sets==0);
+ assert(registeredCereg("\n+CEREG: 1\n+CEREG: 2,5\nOK\n"));
+ assert(registeredCereg("\n+CEREG: 2,\"1234\",\"5678\",7\n+CEREG: 2,1\nOK\n"));
+ assert(!registeredCereg("\n+CEREG: 99,1\n+CEREG: 2,1junk\nOK\n"));
+ assert(!registeredCereg("\n+CEREG: 2,1\n+CEREG: 2,0\nOK\n"));
+ assert(!registeredCereg("\n+CEREG: 2,1\nERROR\n"));
+ fixture();regResponse="+CEREG: 5\n+CEREG: 2,5\nOK\n";serviceAirplaneMode();assert(cellularReady());
  fixture();{ATTransaction owner;assert(owner);ATTransaction denied;assert(!denied);serviceAirplaneMode();assert(!airAttempted);assert(!sendSMS("123","x"));}
  assert(!modemTransactionBusy());
  fixture();server.authenticated=false;handleAirplaneStatus();assert(server.code==401);int before=saved;handleAirplaneSave();assert(saved==before);

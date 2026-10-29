@@ -210,7 +210,7 @@ int main(int argc,char** argv){
         for(int i=0;i<=MAX_PUSH_CHANNELS;i++)processNotifications();CHECK(httpCalls==0);emptySlots();
     } else if(test=="unsynced"){
         epoch=99999;queueMail();processNotifications();emptySlots();
-        CHECK(stats.pushFailed==1&&smtp.connects==0&&smtp.loops==0&&clockMs==0);
+        CHECK(stats.pushFailed==1&&saved==1&&smtp.connects==0&&smtp.loops==0&&clockMs==0);
     } else if(test=="missing_config"){
         config.smtpPass="";queueMail();processNotifications();emptySlots();CHECK(smtp.connects==0);
     } else if(test=="real_success"){
@@ -244,12 +244,31 @@ int main(int argc,char** argv){
             advance(stage);smtp.failInsideLoop=550;processNotifications();
             CHECK(notificationCount==1);smtp.failInsideLoop=0;processNotifications();emptySlots();
         }
-        CHECK(stats.pushFailed==9&&stats.pushSuccess==0);
+        CHECK(stats.pushFailed==9&&saved==9&&stats.pushSuccess==0);
     } else if(test=="disconnect_active"){
         for(int stage=1;stage<=3;stage++){
             advance(stage);WiFi.state=0;processNotifications();emptySlots();WiFi.state=WL_CONNECTED;
         }
-        CHECK(stats.pushFailed==0&&droppedNotifications==0);
+        CHECK(stats.pushFailed==3&&saved==3&&stats.pushSuccess==0&&droppedNotifications==0);
+        for(int i=0;i<5;i++)processNotifications();CHECK(smtp.connects==3);
+        WiFi.state=0;queueMail();processNotifications();CHECK(notificationCount==1&&saved==3);
+        WiFi.state=WL_CONNECTED;processNotifications();connectDone();authDone();sendDone();emptySlots();
+    } else if(test=="config_changes"){
+        Config original=config;
+        for(int stage=1;stage<=3;stage++)for(int field=0;field<6;field++){
+            config=original;advance(stage);int auths=smtp.auths,sends=smtp.sends;
+            if(field==0)config.smtpServer="new.invalid";
+            if(field==1)config.smtpUser="new@example.invalid";
+            if(field==2)config.smtpPass="new-password-sentinel";
+            if(field==3)config.smtpSendTo="new-recipient@example.invalid";
+            if(field==4)config.smtpPort=587;
+            if(field==5)config.emailEnabled=false;
+            processNotifications();emptySlots();CHECK(smtp.auths==auths&&smtp.sends==sends);
+            for(const char c:activeMail.pass)CHECK(c==0);
+        }
+        CHECK(stats.pushFailed==18&&saved==18);
+        config=original;config.smtpPass=std::string(513,'x');queueMail();processNotifications();emptySlots();
+        CHECK(stats.pushFailed==19&&saved==19);
     } else if(test=="real_connection_repro"||test=="connection_contract"){
         start();CHECK(smtp.connected&&!smtp.isConnected()&&!smtp.status().isComplete);
         // TCP成功和停留在握手阶段都不能触发认证。
@@ -331,7 +350,7 @@ class NotificationsTest(unittest.TestCase):
     def test_regressions(self):
         for name in ('capacity', 'bounds', 'offline_expiry', 'clock_wrap', 'channels',
                      'invalid_channels', 'unsynced', 'missing_config', 'real_success',
-                     'sms_mail', 'immediate_failures', 'errors_deadline', 'disconnect_active',
+                     'sms_mail', 'immediate_failures', 'errors_deadline', 'disconnect_active', 'config_changes',
                      'real_connection_repro', 'real_message_repro', 'synchronous_connect_budget',
                      'deadline_overrun_repro'):
             with self.subTest(scenario=name):
@@ -345,6 +364,70 @@ class NotificationsTest(unittest.TestCase):
 
     def test_ready_mail_async_message_should_be_accepted(self):
         self.run_case('message_contract')
+
+    def test_real_wstring_slot_release(self):
+        core = ROOT / '.arduino/data/packages/esp32/hardware/esp32/3.3.0/cores/esp32'
+        header = (core / 'WString.h').read_text(encoding='utf-8').replace('#include <pgmspace.h>', '')
+        header = header.replace('protected:', 'public:')  # 只开放容量观察，不修改实现。
+        impl = (core / 'WString.cpp').read_text(encoding='utf-8')
+        impl = re.sub(r'^#include .*$', '', impl, flags=re.M)
+        # 使用原版WString完整实现；仅屏蔽宿主没有的硬件日志和未使用的数字转换链接。
+        prelude = r'''
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <cctype>
+#include <cstdarg>
+#include <utility>
+#define log_e(...) ((void)0)
+#define log_w(...) ((void)0)
+#define PROGMEM
+#define PSTR(x) (x)
+#define memcpy_P memcpy
+#define itoa host_itoa
+#define ltoa host_ltoa
+#define lltoa host_lltoa
+#define utoa host_utoa
+#define ultoa host_ultoa
+#define ulltoa host_ulltoa
+#define dtostrf host_dtostrf
+char* host_itoa(int,char*,int){std::abort();}char* host_ltoa(long,char*,int){std::abort();}
+char* host_lltoa(long long,char*,int){std::abort();}char* host_utoa(unsigned,char*,int){std::abort();}
+char* host_ultoa(unsigned long,char*,int){std::abort();}char* host_ulltoa(unsigned long long,char*,int){std::abort();}
+char* host_dtostrf(double,int,unsigned,char*){std::abort();}
+'''
+        source = (ROOT / 'code/push_service.ino').read_text(encoding='utf-8')
+        release = function(source, 'void finishNotification()')
+        release = release[release.index('  PendingNotification& completed'):]
+        main = r'''
+struct PendingNotification { String sender,message,timestamp,subject,body; };
+PendingNotification notifications[1];unsigned notificationHead=0,notificationCount=1;
+const unsigned NOTIFICATION_CAPACITY=1;
+void releaseSlot() {
+__RELEASE__
+int main(){
+ for(int n=0;n<10000;++n){
+  notificationCount=1;
+  for(String* s:{&notifications[0].sender,&notifications[0].message,&notifications[0].timestamp,
+                 &notifications[0].subject,&notifications[0].body}){
+   s->reserve(4608);*s="payload";if(s->capacity()<4608)return 1;
+  }
+  releaseSlot();
+  for(String* s:{&notifications[0].sender,&notifications[0].message,&notifications[0].timestamp,
+                 &notifications[0].subject,&notifications[0].body})
+   if(s->length()||(!s->isSSO()&&s->capacity()!=0))return 2;
+ }
+}
+'''.replace('__RELEASE__', release)
+        cpp = Path(self.tmp.name) / 'wstring.cpp'
+        exe = Path(self.tmp.name) / 'wstring.exe'
+        cpp.write_text(prelude + header + impl + main, encoding='utf-8')
+        compiler = ROOT / '.tools/w64devkit/bin/g++.exe'
+        subprocess.run([str(compiler), '-std=c++11', '-ffunction-sections', '-fdata-sections',
+                        '-Wl,--gc-sections', str(cpp), '-o', str(exe)],
+                       env=self.env, check=True, timeout=60)
+        subprocess.run([str(exe)], env=self.env, check=True, timeout=30)
 
     def test_local_readymail_semantics(self):
         # 源码证据保护 faithful mock 的前提；升级库后需要重新审查。

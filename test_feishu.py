@@ -34,6 +34,7 @@ public:
  std::string s;
  String(const char* p=""):s(p){} String(std::string p):s(p){} String(int n):s(std::to_string(n)){}
  size_t length()const{return s.size();} const char* c_str()const{return s.c_str();}
+ bool startsWith(const char* p)const{return s.find(p)==0;}
  char charAt(unsigned i)const{return s[i];}
  char operator[](unsigned i)const{return s[i];}
  String substring(unsigned a,unsigned b=~0u)const{return s.substr(a,std::min(b,(unsigned)s.size())-a);}
@@ -44,13 +45,18 @@ public:
  friend String operator+(const String&a,const String&b){return a.s+b.s;}
  friend bool operator==(const String&a,const String&b){return a.s==b.s;}
 };
-struct { String text; void println(const String& s){text+=s;text+='\n';} } Serial;
-struct { int pushFailed=0; } stats;
+struct { String text; void println(const String& s){text+=s;text+='\n';}
+ template<class... Args> void printf(const char* f,Args... args){char b[256];snprintf(b,sizeof(b),f,args...);text+=b;}
+} Serial;
+struct { int pushFailed=0,pushSuccess=0; } stats;
+int saved=0;void saveStats(){++saved;}
 time_t epoch=1700000000;
 int timeCalls=0;
 time_t mockTime(time_t*){++timeCalls;return epoch;}
 #define time mockTime
-unsigned long millis(){return 0;}
+unsigned long clockMs=0;
+unsigned long millis(){return clockMs;}
+void delay(unsigned long n){clockMs+=n;}
 __CONSTANTS__
 struct PushChannel {bool enabled=true;PushType type=PUSH_TYPE_FEISHU;String name,url,key1,customBody;};
 #define MAX_WIFI_NETWORKS 3
@@ -78,7 +84,38 @@ int mbedtls_base64_encode(unsigned char* out,size_t cap,size_t* len,const unsign
  return 0;
 }
 String capturedUrl,capturedMethod,capturedType,capturedBody;int requests=0;
-int sendHttpRequest(const String& u,const String& m,const String& t,const String& b){++requests;capturedUrl=u;capturedMethod=m;capturedType=t;capturedBody=b;return 200;}
+std::string responseBody="{\"code\":0}";
+int responseCode=200,responseSize=-2,readCount=0,httpDestructs=0,tlsDestructs=0;
+bool tlsAlive=false,beginOK=true,stalled=false,infinite=false,http10=false;
+String transferEncoding;
+struct WiFiClientSecure {
+ WiFiClientSecure(){CHECK(!tlsAlive);tlsAlive=true;}
+ ~WiFiClientSecure(){tlsAlive=false;++tlsDestructs;}
+ void setInsecure(){} void setHandshakeTimeout(int){} void setConnectionTimeout(int){}
+};
+struct ResponseStream {
+ size_t pos=0;
+ int available(){return stalled?0:(infinite||pos<responseBody.size()?1:0);}
+ int read(){++readCount;++clockMs;if(infinite)return ' ';return pos<responseBody.size()?(unsigned char)responseBody[pos++]:-1;}
+};
+struct HTTPClient {
+ WiFiClientSecure* client=nullptr;ResponseStream stream;
+ ~HTTPClient(){if(client)CHECK(tlsAlive);++httpDestructs;}
+ void setConnectTimeout(int){}void setTimeout(int){}void setReuse(bool){}
+ void useHTTP10(bool b){http10=b;}void collectHeaders(const char**,size_t){}
+ bool begin(WiFiClientSecure& c,const String& u){client=&c;capturedUrl=u;return beginOK;}
+ bool begin(const String& u){capturedUrl=u;return beginOK;}
+ void addHeader(const char*,const String& t){capturedType=t;}
+ int GET(){++requests;capturedMethod="GET";return responseCode;}
+ int POST(const String& b){++requests;capturedMethod="POST";capturedBody=b;return responseCode;}
+ String header(const char*){return transferEncoding;}
+ int getSize(){return responseSize==-2?(int)responseBody.size():responseSize;}
+ ResponseStream* getStreamPtr(){return &stream;}
+ bool connected(){return stalled||infinite||stream.pos<responseBody.size();}
+ String errorToString(int){return "模拟连接失败";}
+ // 模拟ESP32 3.3失败end路径：连接断开时不清除_client，析构仍访问它。
+ void end(){if(connected()&&responseCode>0)client=nullptr;}
+};
 '''
 MAIN = r'''
 int main(int argc,char** argv){
@@ -114,7 +151,35 @@ int main(int argc,char** argv){
   c.type=PUSH_TYPE_TELEGRAM;c.key1="chat";CHECK(isPushChannelValid(c));c.key1="";CHECK(!isPushChannelValid(c));
   std::cout<<"OK";return 0;
  }
+ if(mode=="http_lifecycle"){
+  for(int code:{200,204,400,-1,-11})for(bool ok:{false,true}){
+   responseCode=code;beginOK=ok;responseBody="";
+   int before=httpDestructs;
+   sendHttpRequest("https://example.invalid/private-token","POST","application/json", "{}");
+   CHECK(!tlsAlive&&httpDestructs==before+1&&tlsDestructs==httpDestructs);
+  }
+  CHECK(readCount==0);std::cout<<"OK";return 0;
+ }
  PushChannel c;c.url="https://example.invalid/webhook/private-token?existing=1";
+ if(mode=="business_fail")responseBody="{\"code\":19021,\"msg\":\"secret-0\"}";
+ if(mode=="legacy_ok")responseBody="{\"StatusCode\":0,\"StatusMessage\":\"success\"}";
+ if(mode=="legacy_fail")responseBody="{\"StatusCode\":1}";
+ if(mode=="both_fail")responseBody="{\"code\":0,\"StatusCode\":1}";
+ if(mode=="nested")responseBody="{\"data\":{\"code\":0}}";
+ if(mode=="string_code")responseBody="{\"code\":\"0\"}";
+ if(mode=="duplicate")responseBody="{\"code\":1,\"code\":0}";
+ if(mode=="invalid")responseBody="{\"code\":0,}";
+ if(mode=="trailing")responseBody="{\"code\":0}garbage";
+ if(mode=="empty")responseBody="";
+ if(mode=="huge"){responseBody=std::string(100000,'x');}
+ if(mode=="infinite"){responseSize=-1;infinite=true;}
+ if(mode=="stalled"){responseSize=-1;stalled=true;}
+ if(mode=="truncated")responseSize=100;
+ if(mode=="chunked")transferEncoding="chunked";
+ if(mode=="http_error")responseCode=500;
+ if(mode=="transport_error")responseCode=-1;
+ if(mode=="generic_empty"){c.type=PUSH_TYPE_POST_JSON;responseCode=204;responseBody="";}
+ if(mode=="generic_huge"){c.type=PUSH_TYPE_POST_JSON;responseBody=std::string(100000,'x');}
  if(mode=="signed"||mode=="unsynced"||mode=="negative")c.key1="secret-0";
  if(mode=="unsynced"||mode=="unsigned_unsynced")epoch=0;
  if(mode=="negative")epoch=-1;
@@ -122,6 +187,7 @@ int main(int argc,char** argv){
  if(mode=="empty_url")c.url="";
  sendToChannel(c,"发\"送\\者\t", "内容\n第二行\r\t\\\"", "2026-10-28\n12:34");
  std::cout<<"{\"requests\":"<<requests<<",\"failed\":"<<stats.pushFailed<<",\"timeCalls\":"<<timeCalls
+ <<",\"success\":"<<stats.pushSuccess<<",\"saved\":"<<saved<<",\"read\":"<<readCount<<",\"elapsed\":"<<clockMs
  <<",\"url\":\""<<jsonEscape(capturedUrl).s<<"\",\"method\":\""<<capturedMethod.s
  <<"\",\"type\":\""<<capturedType.s<<"\",\"body\":\""<<jsonEscape(capturedBody).s
  <<"\",\"logs\":\""<<jsonEscape(Serial.text).s<<"\"}";
@@ -158,9 +224,11 @@ class FeishuTest(unittest.TestCase):
         conf = (ROOT / 'code/config.h').read_text(encoding='utf-8')
         constants = re.search(r'enum PushType\s*\{.*?\};', conf, re.S).group()
         constants += '\n' + re.search(r'^#define MAX_PUSH_CHANNELS\s+\d+', conf, re.M).group()
-        actual = '\n'.join(function(source, sig) for sig in (
+        actual = 'int sendHttpRequest(const String&,const String&,const String&,const String&,bool=false);\n'
+        actual += '\n'.join(function(source, sig) for sig in (
             'String urlEncode(', 'String jsonEscape(', 'String telegramEscape(',
-            'String hmacSha256Base64(', 'void sendToChannel('))
+            'String hmacSha256Base64(', 'bool feishuResponseSucceeded(',
+            'bool readFeishuResponse(', 'int sendHttpRequest(', 'void sendToChannel('))
         actual += '\n' + function((ROOT / 'code/config.ino').read_text(encoding='utf-8'),
                                   'bool isPushChannelValid(')
         handlers = (ROOT / 'code/web_handlers.ino').read_text(encoding='utf-8')
@@ -252,6 +320,22 @@ struct {
         for name in ('disabled', 'empty_url'):
             result = self.request(name)
             self.assertEqual((result['requests'], result['failed'], result['timeCalls']), (0, 0, 0))
+
+    def test_real_http_lifecycle_and_business_response(self):
+        self.assertEqual(self.run_case('http_lifecycle'), 'OK')
+        for name in ('business_fail', 'legacy_fail', 'both_fail', 'nested', 'string_code',
+                     'duplicate', 'invalid', 'trailing', 'empty', 'huge', 'infinite',
+                     'stalled', 'truncated', 'chunked', 'http_error', 'transport_error'):
+            with self.subTest(name=name):
+                result = self.request(name)
+                self.assertEqual((result['failed'], result['success']), (1, 0))
+                self.assertLessEqual(result['read'], 2048)
+                self.assertLessEqual(result['elapsed'], 2000)
+        result = self.request('legacy_ok')
+        self.assertEqual((result['failed'], result['success']), (0, 1))
+        for name in ('generic_empty', 'generic_huge'):
+            result = self.request(name)
+            self.assertEqual((result['failed'], result['success'], result['read']), (0, 1, 0))
 
     def test_configuration_validation(self):
         self.assertEqual(self.run_case('valid'), 'OK')
@@ -483,7 +567,7 @@ const result=document.createElement('output');result.id='layout-result';result.t
 });
 </script>'''
         from html import unescape
-        preview = ROOT / 'build/ui-preview.html'
+        preview = Path(self.tmp.name) / 'ui-preview.html'
         preview_html = re.sub(r'<link rel="stylesheet"[^>]+>', lambda _: '<style>' + self.run_case('css') + '</style>', html)
         preview_stub = stub.replace('<script>', '<script>if(!location.hash)location.hash="control";', 1)
         preview.write_text(preview_html.replace('<script>', preview_stub + '<script>', 1), encoding='utf-8')
@@ -513,7 +597,7 @@ const result=document.createElement('output');result.id='layout-result';result.t
                     self.assertEqual(data['width'], width)
                     self.assertEqual(data['failures'], [])
             for width, tab, name in ((1440, 'control', 'air-desktop'), (390, 'control', 'air-mobile')):
-                shot = ROOT / f'build/ui-{name}.png'
+                shot = Path(tmp) / f'ui-{name}.png'
                 page.write_text('<body style="margin:0"><iframe style="border:0;width:' + str(width) +
                     'px;height:900px" src="' + preview.as_uri() + '#' + tab + '"></iframe></body>', encoding='utf-8')
                 subprocess.run([str(chrome), '--headless=new', '--disable-gpu', '--no-first-run',

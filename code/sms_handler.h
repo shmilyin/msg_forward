@@ -18,6 +18,8 @@ String assembleConcatSms(int slot);
 void clearConcatSlot(int slot);
 void checkConcatTimeout();
 bool sendSMS(const char* phoneNumber, const char* message);
+bool smsSendResultUnknown();
+unsigned long smsPduDropCount();
 void processSmsContent(const char* sender, const char* text, const char* timestamp);
 void checkSerial1URC();
 String readSerialLine(HardwareSerial& port);

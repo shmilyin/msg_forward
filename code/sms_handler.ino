@@ -275,9 +275,35 @@ void checkConcatTimeout() {
   }
 }
 
+static bool smsResultUnknown = false;
+bool smsSendResultUnknown() { return smsResultUnknown; }
+
+// 仅CMGS提交后的有界等待喂狗；不改变普通AT等待的看门狗行为。
+static bool waitSmsSubmission() {
+  unsigned long start = millis(), fedAt = start;
+  bool confirmed = false;
+  while ((unsigned long)(millis() - start) < 30000UL) {
+    String line = readModemLine(false);
+    if (line.length() && !dispatchModemURC(line)) {
+      if (line.startsWith("+CMGS:")) confirmed = true;
+      if (atErrorLine(line)) return false;
+      if (line == "OK" && confirmed) return true;
+    }
+    if ((unsigned long)(millis() - fedAt) >= 1000UL) {
+      if (watchdogReady) esp_task_wdt_reset();
+      fedAt = millis();
+    }
+    delay(1);
+  }
+  markATTimeout();
+  smsResultUnknown = true;
+  Serial.println("短信提交结果未知，停止后续发送以避免重复；需人工核实后重启");
+  return false;
+}
+
 // 发送短信（PDU 模式）
 bool sendSMS(const char* phoneNumber, const char* message) {
-  if (!phoneNumber || !message || !cellularReady()) return false;
+  if (!phoneNumber || !message || smsResultUnknown || !cellularReady()) return false;
   ATTransaction transaction;
   if (!transaction) return false;
   Serial.println("准备发送短信...");
@@ -311,8 +337,7 @@ bool sendSMS(const char* phoneNumber, const char* message) {
   }
   Serial1.print(outgoingPdu);
   Serial1.write(0x1A);
-  String sent = waitATResponse(10000, false, false);
-  return atResponseOK(sent) && sent.indexOf("\n+CMGS:") >= 0;
+  return waitSmsSubmission();
 }
 
 // 处理最终的短信内容（管理员命令检查和转发）
@@ -372,7 +397,10 @@ String readSerialLine(HardwareSerial& port) {
   return readModemLine(false);
 }
 
-static const unsigned int SMS_PDU_QUEUE_SIZE = 8;
+// 容纳两条10段长短信及额外突发；满时保留已排队数据，不在AT中解码/推送。
+static const unsigned int SMS_PDU_QUEUE_SIZE = 32;
+static unsigned long smsPduDrops = 0;
+unsigned long smsPduDropCount() { return smsPduDrops; }
 static String smsPduQueue[SMS_PDU_QUEUE_SIZE];
 static unsigned int smsPduHead = 0, smsPduCount = 0;
 static bool waitingSmsPdu = false;
@@ -391,7 +419,8 @@ bool dispatchModemURC(const String& line) {
       smsPduQueue[(smsPduHead + smsPduCount) % SMS_PDU_QUEUE_SIZE] = line;
       smsPduCount++;
     } else {
-      Serial.println("短信PDU队列已满，丢弃新到PDU");
+      ++smsPduDrops;
+      Serial.printf("短信PDU队列已满，累计丢弃: %lu\n", smsPduDrops);
     }
     return true;
   }
@@ -412,6 +441,7 @@ bool isHexString(const String& str) {
 
 // 处理 URC 和 PDU
 void checkSerial1URC() {
+  if (modemTransactionBusy()) return;
   unsigned long start = millis();
   for (int i = 0; i < 32 && Serial1.available() &&
        (unsigned long)(millis() - start) < 10; i++) {

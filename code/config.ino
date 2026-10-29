@@ -122,9 +122,24 @@ void recoverSmsStorage() {
   if (!SPIFFS.exists("/sms.txt") && SPIFFS.exists("/sms.bak"))
     SPIFFS.rename("/sms.bak", "/sms.txt");
 }
+static bool smsStorageMounted = false;
+bool smsStorageReady() { return smsStorageMounted; }
 void initSmsStorage() {
-  if (!SPIFFS.begin(false)) Serial.println("SPIFFS 初始化失败，保留原始数据");
+  smsStorageMounted = SPIFFS.begin(false);
+  if (!smsStorageMounted) Serial.println("SPIFFS 初始化失败，保留原始数据，需管理员显式初始化");
   else recoverSmsStorage();
+}
+bool initializeSmsStorage(const String& confirmation) {
+  if (confirmation != "ERASE_UNMOUNTED_STORAGE") return false;
+  // 再次尝试无损挂载；已挂载分区即使为空也绝不格式化。
+  if (smsStorageMounted || SPIFFS.begin(false)) {
+    smsStorageMounted = true;
+    recoverSmsStorage();
+    return false;
+  }
+  if (!SPIFFS.format()) return false;
+  smsStorageMounted = SPIFFS.begin(false);
+  return smsStorageMounted;
 }
 
 bool clearSmsHistory() {
@@ -137,18 +152,21 @@ bool clearSmsHistory() {
   return true;
 }
 
-bool compactSmsStorage() {
+bool rewriteSmsStorage(bool trimCapacity) {
   recoverSmsStorage();
   File src = SPIFFS.open("/sms.txt", "r");
   if (!src) return false;
   size_t size = src.size();
-  if (SPIFFS.totalBytes() - SPIFFS.usedBytes() < size / 2 + 2048) { src.close(); return false; }
-  if (!src.seek(size / 2)) { src.close(); return false; }
-  while (src.available() && src.read() != '\n') yield();
+  if (trimCapacity) {
+    if (!src.seek(size / 2)) { src.close(); return false; }
+    while (src.available() && src.read() != '\n') yield();
+  }
   size_t begin = src.position(), completeEnd = begin;
   while (src.available()) { if (src.read() == '\n') completeEnd = src.position(); yield(); }
   if (!src.seek(begin)) { src.close(); return false; }
   size_t expected = completeEnd - begin;
+  size_t total = SPIFFS.totalBytes(), used = SPIFFS.usedBytes();
+  if (used > total || total - used < expected + 2048) { src.close(); return false; }
   File dst = SPIFFS.open("/sms.tmp", "w");
   if (!dst) { src.close(); return false; }
   uint8_t buffer[512];
@@ -172,15 +190,29 @@ bool compactSmsStorage() {
   return true;
 }
 
+bool compactSmsStorage() {
+  return rewriteSmsStorage(true);
+}
+bool repairSmsStorageTail() {
+  return rewriteSmsStorage(false);
+}
+
 void addSmsToHistory(const char* sender, const char* message, const char* timestamp) {
   stats.smsReceived++;
   recoverSmsStorage();
+  if (!SPIFFS.exists("/sms.txt") && SPIFFS.exists("/sms.bak")) { saveStats(); return; }
   File f = SPIFFS.open("/sms.txt", "r");
+  if (!f && SPIFFS.exists("/sms.txt")) { saveStats(); return; }
   size_t size = f ? f.size() : 0;
   bool partialTail = false;
-  if (size && f.seek(size - 1)) partialTail = f.read() != '\n';
+  if (size) {
+    if (!f.seek(size - 1)) { f.close(); saveStats(); return; }
+    int last = f.read();
+    if (last < 0) { f.close(); saveStats(); return; }
+    partialTail = last != '\n';
+  }
   f.close();
-  if ((size > 50000 || partialTail) && !compactSmsStorage()) {
+  if ((partialTail && !repairSmsStorageTail()) || (size > 50000 && !compactSmsStorage())) {
     Serial.println("历史裁剪失败，保留原文件并暂停追加");
     saveStats(); return;
   }

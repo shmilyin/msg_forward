@@ -62,7 +62,13 @@ API均使用现有Basic认证：
 
 通知槽、PDU队列和长短信槽使用`String=(const char*)nullptr`触发Core3.3.0的`invalidate()`，实际释放容量；空字符串和空String移动赋值会复用原容量。SMTP消息保持库内部所有权，停止后再清理；减少不使用JSON通道的转义副本。
 
-HTTP连接/读取2秒、TLS握手3秒；SMTP15秒为步骤间预算，无法抢占底层同步TCP/TLS调用。队列满时拒绝新通知并计数，5分钟过期释放，无自动重发和断电持久化。HTTP2xx按传输成功统计，未解析渠道业务错误码。HTTPS仍跳过证书验证。
+HTTP连接/读取2秒、TLS握手3秒；TLS客户端生命周期覆盖HTTP客户端，包含连接失败析构路径。SMTP15秒为步骤间预算，无法抢占底层同步TCP/TLS调用；单次会话固定配置快照，配置变更取消旧任务，发送中断网记失败、不自动重发，避免重复投递。队列满时拒绝新通知并计数，5分钟过期释放，无断电持久化。飞书响应最多读取2048字节、2秒，严格检查顶层code/StatusCode为0；其他通道仍按HTTP2xx统计传输成功。HTTPS仍跳过证书验证。
+
+Review修复补充：实际CFUN=1但未校时时允许CMGF/CNMI短信初始化；正常目标下启动APN重置成功一次，失败退避重试，退出飞行不重复重置；飞行状态每60秒回读。PDU队列32槽，溢出计入`pduDropped`，有限缓冲仍不能保证无限突发不丢。CEREG按行区分查询和异步通知。短信提交最多等待30秒，期间有界循环定期刷新看门狗；超时标记`smsResultUnknown`并暂停后续发送，需人工核实后重启，不能当作确定失败反复重发。同步发送期间管理页面可能短暂停顿。
+
+损坏历史尾行只移除不完整记录，文件超50KB才执行容量裁剪。SPIFFS不自动格式化挂载失败的分区；历史页仅在`storageReady=false`时提供显式初始化按钮，确认后调用认证`POST /storage/init`，表单`confirm=ERASE_UNMOUNTED_STORAGE`。该操作会清除未挂载分区的数据，已有且可挂载的分区拒绝初始化；不在升级验证中调用。
+
+系统配置采用完整验证后提交，缺失字段保留原值；无关配置保存不重置保号期限或到期待办。仅保存任务通过`/timer`发送五个任务字段，不保存其他编辑。`/timer`和`/sendsms`同时兼容原版扁平JSON及当前表单请求，重复、非法或额外字段拒绝。配置请求和副本使用有界堆分配，失败时拒绝提交，避免扩大主循环栈占用。
 
 ## 构建与离线验证
 
@@ -77,6 +83,8 @@ python test_feishu.py
 python test_airplane.py
 python test_airplane_device.py
 python test_storage.py
+python test_sms_receive.py
+python test_config_api.py
 python build.py compile
 ```
 
@@ -94,7 +102,7 @@ python build.py compile
 
 ESP32-C3 Super Mini配ML307R-DC，GPIO3接ML307 RX、GPIO4接ML307 TX，GND共地，ML307 VCC/EN接合适的5V供电并安装天线。部分SIM/运营商兼容性需要自测。修改`code/wifi_config.h`默认WiFi；首次访问`sms.local`或串口显示的IP，默认账号`admin`、密码`admin123`，及时修改管理密码。网页可保存三个WiFi，变更后需重启。
 
-本轮未烧录或测试硬件。后续在设备上确认CFUN=4支持、上电射频默认行为、跨日/跨午夜、退出飞行后SIM注册/短信恢复，以及供电和Flash掉电恢复；再进行72小时故障注入及7天观察。断网/恢复WiFi、阻断NTP、延迟HTTP和AT响应、在Ping及短信发送期间接收短信，核对计数、队列、复位原因、恢复耗时和堆趋势。
+2026-10-29的Review修复已通过八组回归、真实编译并烧录COM3，管理页面、存储挂载与SIM/注册/附着状态回读正常。未执行真实短信发送、存储清空/格式化或主动飞行切换。后续在设备上确认CFUN=4支持、上电射频默认行为、跨日/跨午夜、退出飞行后SIM注册/短信恢复，以及供电和Flash掉电恢复；再进行72小时故障注入及7天观察。断网/恢复WiFi、阻断NTP、延迟HTTP和AT响应、在Ping及短信发送期间接收短信，核对计数、队列、复位原因、恢复耗时和堆趋势。
 
 每分钟输出`health`，认证后的`/stats`包含`minHeap`、`largestBlock`、`maxLoopMs`、队列深度、丢弃计数和复位原因。验收要求无意外复位、主循环和通知可恢复、预热后堆和最大连续块没有下降趋势。UART8192字节不保证任意突发流量绝不丢失。
 

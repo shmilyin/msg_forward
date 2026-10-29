@@ -6,6 +6,8 @@
 #include "config.h"
 
 extern WebServer server;
+struct ConfigArg;
+struct ConfigRequest;
 
 // Web 页面处理
 bool checkAuth();
@@ -22,6 +24,7 @@ void handleSave();
 void handleRestart();
 void handleSmsHistory();
 void handleClearSmsHistory();
+void handleStorageInit();
 void handleStats();
 String htmlEscape(const String& text);
 

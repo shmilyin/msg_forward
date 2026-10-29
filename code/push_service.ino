@@ -88,23 +88,146 @@ String hmacSha256Base64(const String& secret, const String& data) {
   return String((char*)base64Result);
 }
 
-// 发送 HTTP/HTTPS 请求的通用函数
-int sendHttpRequest(const String& url, const String& method, const String& contentType, const String& body) {
+// 严格解析有界JSON；只接受顶层code/StatusCode整数，两个字段同时存在时都必须成功。
+bool feishuResponseSucceeded(const char* text) {
+  struct Parser {
+    const char* p;
+    bool seen = false, success = true;
+    void ws() { while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') ++p; }
+    bool string(String* key = nullptr) {
+      if (*p++ != '"') return false;
+      while (*p && *p != '"') {
+        unsigned char c = *p++;
+        if (c < 32) return false;
+        if (c == '\\') {
+          c = *p++;
+          if (!c) return false;
+          if (c == 'u') {
+            unsigned value = 0;
+            for (int i = 0; i < 4; ++i) {
+              char h = *p;
+              if (!h || !isxdigit((unsigned char)h)) return false;
+              ++p;
+              value = value * 16 + (h <= '9' ? h - '0' : (h | 32) - 'a' + 10);
+            }
+            c = value < 128 ? value : '?';
+          } else {
+            if (!strchr("\"\\/bfnrt", c)) return false;
+            if (c == 'b' || c == 'f' || c == 'n' || c == 'r' || c == 't') c = '?';
+          }
+        }
+        if (key) *key += (char)c;
+      }
+      if (*p != '"') return false;
+      ++p; return true;
+    }
+    bool value(unsigned depth, bool root = false) {
+      if (depth > 12) return false;
+      ws();
+      if (*p == '{' || *p == '[') {
+        bool object = *p++ == '{';
+        char end = object ? '}' : ']';
+        ws(); if (*p == end) { ++p; return true; }
+        do {
+          ws(); String key;
+          if (object) {
+            if (!string(root ? &key : nullptr)) return false;
+            ws(); if (*p++ != ':') return false; ws();
+          }
+          bool code = root && (key == "code" || key == "StatusCode");
+          const char* start = p;
+          if (!value(depth + 1)) return false;
+          if (code) {
+            seen = true;
+            // 不接受字符串、null、浮点数或重复字段隐藏的失败码。
+            if (p - start != 1 || *start != '0') success = false;
+          }
+          ws(); if (*p == end) { ++p; return true; }
+          if (*p != ',') return false;
+          ++p;
+        } while (*p);
+        return false;
+      }
+      if (*p == '"') return string();
+      for (const char* literal : {"true", "false", "null"}) {
+        size_t n = strlen(literal);
+        if (strncmp(p, literal, n) == 0) { p += n; return true; }
+      }
+      if (*p == '-') ++p;
+      if (*p == '0') ++p;
+      else {
+        if (*p < '1' || *p > '9') return false;
+        while (*p >= '0' && *p <= '9') ++p;
+      }
+      if (*p == '.') {
+        ++p; if (*p < '0' || *p > '9') return false;
+        while (*p >= '0' && *p <= '9') ++p;
+      }
+      if (*p == 'e' || *p == 'E') {
+        ++p; if (*p == '+' || *p == '-') ++p;
+        if (*p < '0' || *p > '9') return false;
+        while (*p >= '0' && *p <= '9') ++p;
+      }
+      return true;
+    }
+    explicit Parser(const char* text) : p(text) {}
+  } parser(text);
+  parser.ws();
+  if (*parser.p != '{' || !parser.value(0, true)) return false;
+  parser.ws();
+  return !*parser.p && parser.seen && parser.success;
+}
+
+bool readFeishuResponse(HTTPClient& http) {
+  // HTTP/1.0请求关闭连接，避免HTTPClient内部无界的chunk头读取。
+  // 违反协商仍返回传输编码的响应拒绝处理，不把原始chunk当JSON。
+  if (http.header("Transfer-Encoding").length()) return false;
+  const int capacity = 2048;
+  int expected = http.getSize();
+  if (expected > capacity) return false;
+  char response[capacity + 1];
+  int used = 0;
+  unsigned long started = millis();
+  auto* stream = http.getStreamPtr();
+  if (!stream) return false;
+  while (expected < 0 || used < expected) {
+    if ((unsigned long)(millis() - started) >= 2000) return false;
+    if (stream->available()) {
+      if (used == capacity) return false;
+      int c = stream->read();
+      if (c >= 0) response[used++] = (char)c;
+    } else if (!http.connected()) {
+      if (expected >= 0 && used != expected) return false;
+      break;
+    } else delay(1);
+  }
+  response[used] = 0;
+  if (memchr(response, 0, used)) return false;
+  return feishuResponseSucceeded(response);
+}
+
+// TLS必须比HTTPClient先构造、后析构；ESP32 3.3失败end可能保留_client。
+int sendHttpRequest(const String& url, const String& method, const String& contentType, const String& body, bool feishu) {
+  WiFiClientSecure httpTls;
   HTTPClient http;
   http.setConnectTimeout(2000);
   http.setTimeout(2000);
   http.setReuse(false);
-  WiFiClientSecure httpTls;
   httpTls.setInsecure();
+  if (feishu) {
+    http.useHTTP10(true);
+    const char* headers[] = {"Transfer-Encoding"};
+    http.collectHeaders(headers, 1);
+  }
   httpTls.setHandshakeTimeout(3);
   httpTls.setConnectionTimeout(2000);
   
-  // 判断是否为 HTTPS
-  if (url.startsWith("https://")) {
-    // 使用全局的 ssl_client（在 code.ino 中已设置 setInsecure）
-    http.begin(httpTls, url);
-  } else {
-    http.begin(url);
+  bool begun = url.startsWith("https://") ? http.begin(httpTls, url) : http.begin(url);
+  if (!begun) {
+    Serial.println("HTTP初始化失败");
+    stats.pushFailed++;
+    http.end();
+    return -1;
   }
   
   if (contentType.length() > 0) {
@@ -122,8 +245,12 @@ int sendHttpRequest(const String& url, const String& method, const String& conte
     Serial.printf("HTTP响应码: %d\n", httpCode);
     // 所有 2xx 状态码都视为成功 (200 OK, 201 Created, 202 Accepted, 204 No Content 等)
     if (httpCode >= 200 && httpCode < 300) {
-      // 不下载响应正文：即便服务端返回巨量或无限正文，内存也不会随之增长。
-      stats.pushSuccess++;
+      if (!feishu || readFeishuResponse(http)) stats.pushSuccess++;
+      else {
+        Serial.println("飞书业务响应失败或响应超限/无效");
+        stats.pushFailed++;
+        httpCode = -100;
+      }
     } else {
       Serial.println("HTTP错误响应");
       stats.pushFailed++;
@@ -291,6 +418,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
         if (timestampSec < 100000) {
           Serial.println("时间未同步，跳过本次飞书加签推送");
           stats.pushFailed++;
+          saveStats();
           return;
         }
         char timestampBuf[24];
@@ -303,7 +431,7 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       }
       String content = "来自: " + String(sender) + "\n" + String(message) + "\n\n" + String(timestamp);
       jsonData += "\"msg_type\":\"text\",\"content\":{\"text\":\"" + jsonEscape(content) + "\"}}";
-      sendHttpRequest(channel.url, "POST", "application/json", jsonData);
+      sendHttpRequest(channel.url, "POST", "application/json", jsonData, true);
       break;
     }
 
@@ -359,6 +487,30 @@ static unsigned int notificationHead = 0, notificationCount = 0;
 static unsigned long droppedNotifications = 0;
 static unsigned long mailStarted = 0;
 static int mailStage = 0;
+// 仅活跃邮件持有一份配置；固定数组限制快照占用，完成后清零凭据。
+struct ActiveMailConfig {
+  char server[254], user[321], pass[513], recipient[513];
+  int port = 0;
+  bool capture() {
+    if (!config.emailEnabled || !config.smtpServer.length() || config.smtpServer.length() >= sizeof(server) ||
+        !config.smtpUser.length() || config.smtpUser.length() >= sizeof(user) ||
+        !config.smtpPass.length() || config.smtpPass.length() >= sizeof(pass) ||
+        !config.smtpSendTo.length() || config.smtpSendTo.length() >= sizeof(recipient) ||
+        config.smtpPort <= 0 || config.smtpPort > 65535) return false;
+    strcpy(server, config.smtpServer.c_str()); strcpy(user, config.smtpUser.c_str());
+    strcpy(pass, config.smtpPass.c_str()); strcpy(recipient, config.smtpSendTo.c_str());
+    port = config.smtpPort; return true;
+  }
+  bool matches() const {
+    return config.emailEnabled && config.smtpServer == server && config.smtpUser == user &&
+           config.smtpPass == pass && config.smtpSendTo == recipient && config.smtpPort == port;
+  }
+  void clear() {
+    volatile char* bytes = reinterpret_cast<volatile char*>(this);
+    for (size_t i = 0; i < sizeof(*this); ++i) bytes[i] = 0;
+  }
+};
+static ActiveMailConfig activeMail;
 
 unsigned int notificationQueueDepth() { return notificationCount; }
 unsigned long notificationDropCount() { return droppedNotifications; }
@@ -403,6 +555,7 @@ void finishNotification() {
   smtp.getMessage().clear();
   ssl_client.stop();
   mailStage = 0;
+  activeMail.clear();
   PendingNotification& completed = notifications[notificationHead];
   completed.sender = (const char*)nullptr;
   completed.message = (const char*)nullptr;
@@ -414,17 +567,27 @@ void finishNotification() {
   notificationCount--;
 }
 
+void failNotification(const char* reason) {
+  Serial.println(reason);
+  stats.pushFailed++;
+  finishNotification();
+  saveStats();
+}
+
 void processNotifications() {
   if (!notificationCount) return;
   PendingNotification& job = notifications[notificationHead];
   if ((unsigned long)(millis() - job.queuedAt) >= 300000) {
     droppedNotifications++;
-    Serial.println("通知等待超过5分钟，释放队列槽位");
-    finishNotification();
+    failNotification("通知等待超过5分钟，任务失败并释放槽位");
+    return;
+  }
+  if (mailStage && !activeMail.matches()) {
+    failNotification(mailStage == 3 ? "邮件配置变更，投递结果未知，取消且不自动重发" : "邮件配置变更，取消当前任务");
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {
-    if (mailStage) finishNotification();
+    if (mailStage) failNotification("邮件中途断网，结果未知，计为失败且不自动重发");
     return;
   }
   if (!job.emailOnly && job.channel < MAX_PUSH_CHANNELS) {
@@ -435,32 +598,30 @@ void processNotifications() {
     }
     return;
   }
-  if (!config.emailEnabled || !config.smtpServer.length() || !config.smtpUser.length() ||
-      !config.smtpPass.length() || !config.smtpSendTo.length()) {
+  if (!mailStage && !config.emailEnabled) {
     finishNotification();
+    return;
+  }
+  if (!mailStage && !activeMail.capture()) {
+    failNotification("邮件配置缺失或超限，取消当前任务");
     return;
   }
   // 校时在连接WiFi时后台启动；不在邮件路径等待NTP。
   if (time(nullptr) < 100000) {
-    Serial.println("时间未同步，跳过本次邮件");
-    stats.pushFailed++;
-    finishNotification();
+    failNotification("时间未同步，跳过本次邮件");
     return;
   }
   // 15秒是协作式轮询预算；同步TCP/TLS仍受底层超时约束，并非整个操作的绝对上限。
   if (mailStage && ((unsigned long)(millis() - mailStarted) >= 15000 ||
                     smtp.status().errorCode != 0)) {
-    Serial.println("邮件失败或轮询已达15秒预算，关闭连接");
-    stats.pushFailed++;
-    finishNotification();
+    failNotification("邮件失败或轮询已达15秒预算，结果可能未知，不自动重发");
     return;
   }
   if (!mailStage) {
     mailStarted = millis();
     mailStage = 1;
-    if (!smtp.connect(config.smtpServer, config.smtpPort, nullptr, true, false)) {
-      stats.pushFailed++;
-      finishNotification();
+    if (!smtp.connect(activeMail.server, activeMail.port, nullptr, true, false)) {
+      failNotification("邮件连接失败");
     }
     return;
   }
@@ -468,9 +629,8 @@ void processNotifications() {
   // ReadyMail的isConnected同时检查底层连接和server_greeting_ack，不只是TCP已连接。
   if (mailStage == 1 && smtp.isConnected()) {
     mailStage = 2;
-    if (!smtp.authenticate(config.smtpUser, config.smtpPass, readymail_auth_password, false)) {
-      stats.pushFailed++;
-      finishNotification();
+    if (!smtp.authenticate(activeMail.user, activeMail.pass, readymail_auth_password, false)) {
+      failNotification("邮件认证失败");
     }
   } else if (mailStage == 2 && smtp.isAuthenticated()) {
     if (!job.emailOnly) {
@@ -481,15 +641,14 @@ void processNotifications() {
     // await=false保留消息引用，必须使用库拥有的内部消息。
     SMTPMessage& msg = smtp.getMessage();
     msg.clear();
-    msg.headers.add(rfc822_from, ("sms notify <" + config.smtpUser + ">").c_str());
-    msg.headers.add(rfc822_to, config.smtpSendTo.c_str());
+    msg.headers.add(rfc822_from, (String("sms notify <") + activeMail.user + ">").c_str());
+    msg.headers.add(rfc822_to, activeMail.recipient);
     msg.headers.add(rfc822_subject, job.subject.c_str());
     msg.text.body(job.body.c_str());
     msg.timestamp = time(nullptr);
     mailStage = 3;
     if (!smtp.send(msg, "", false)) {
-      stats.pushFailed++;
-      finishNotification();
+      failNotification("邮件发送失败，结果可能未知，不自动重发");
     }
   } else if (mailStage == 3 && smtp.status().isComplete) {
     stats.pushSuccess++;

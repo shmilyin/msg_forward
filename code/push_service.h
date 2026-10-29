@@ -5,6 +5,8 @@
 #include "config.h"
 
 // 函数声明
+int sendHttpRequest(const String& url, const String& method, const String& contentType,
+                    const String& body, bool feishu = false);
 String urlEncode(const String& str);
 String jsonEscape(const String& str);
 void sendToChannel(const PushChannel& channel, const char* sender, const char* message, const char* timestamp);

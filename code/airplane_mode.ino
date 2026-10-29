@@ -7,10 +7,15 @@ static String airError;
 static unsigned long airRetryAt = 0;
 static unsigned int airFailures = 0;
 static bool airAttempted = false;
+static bool airSmsReady = false;
+static bool airApnReady = false;
 
 void initAirplaneMode() {
   airSchedule = AirSchedule();
   airActual = -1; airRestoring = true; airAttempted = false;
+  airSmsReady = airApnReady = false;
+  airSwitching = airSimReady = airRegistered = airAttached = false;
+  airFailures = 0; airRetryAt = 0; airError = String();
 }
 static void updateAirTarget() {
   airSchedule.update(config.airplaneEnabled, config.airplaneStartMinute,
@@ -36,49 +41,73 @@ static int queryCFUN() {
   if (r.indexOf("\n+CFUN: 1\n") >= 0) return 1;
   return -1;
 }
+// 查询响应与URC共享前缀；只接受合法的查询格式<n>,<stat>。
+static bool registeredCereg(const String& response) {
+  if (!atResponseOK(response)) return false;
+  bool registered = false;
+  int offset = 0;
+  while (offset < (int)response.length()) {
+    int end = response.indexOf('\n', offset);
+    if (end < 0) end = response.length();
+    String line = response.substring(offset, end);
+    line.trim();
+    if (line.startsWith("+CEREG:")) {
+      int n = -1, stat = -1, consumed = 0;
+      if (sscanf(line.c_str() + 7, " %d , %d %n", &n, &stat, &consumed) == 2 &&
+          consumed > 0 && n >= 0 && n <= 5 && stat >= 0 && stat <= 10) {
+        char tail = line.c_str()[7 + consumed];
+        if (tail == '\0' || tail == ',') registered = stat == 1 || stat == 5;
+      }
+    }
+    offset = end + 1;
+  }
+  return registered;
+}
 void serviceAirplaneMode() {
   updateAirTarget();
   if (modemTransactionBusy()) return;
   unsigned long now = millis();
   if (airAttempted && (int32_t)(now - airRetryAt) < 0) return;
-  bool desiredMatches = airSchedule.targetKnown && airActual == (airSchedule.target ? 4 : 1);
-  if (desiredMatches && !airRestoring && airActual == 4) return;
   ATTransaction transaction;
   if (!transaction) return;
   airAttempted = true;
   airSwitching = true;
   int previousActual = airActual;
   airActual = queryCFUN();
-  if (previousActual != airActual && airActual == 1) airRestoring = true;
-  // 未校时仅查询，不主动开启射频，也不初始化数据连接。
-  if (!airSchedule.targetKnown) {
-    airSwitching = false; airRetryAt = millis() + 10000; return;
-  }
-  int desired = airSchedule.target ? 4 : 1;
-  if (airActual != desired) {
+  if (previousActual != airActual) {
+    airSmsReady = false;
     airRestoring = true;
+  }
+  // 未校时保留实际射频状态，只恢复短信接收，不触碰数据配置。
+  int desired = airSchedule.targetKnown ? (airSchedule.target ? 4 : 1) : airActual;
+  if (airSchedule.targetKnown && airActual != desired) {
+    airRestoring = true;
+    airSmsReady = false;
     airSimReady = airRegistered = airAttached = false;
     transactionATCommand(desired == 4 ? "AT+CFUN=4" : "AT+CFUN=1", 3000);
     airActual = queryCFUN();
   }
-  bool ok = airActual == desired;
+  bool ok = airActual >= 0 && airActual == desired;
   if (!ok) airError = "CFUN设置后回读未确认目标";
   if (ok && desired == 1) {
-    if (airRestoring) {
+    if (!airSmsReady) {
       bool pduOK = atResponseOK(transactionATCommand("AT+CMGF=0", 1500));
       bool cnmiOK = atResponseOK(transactionATCommand("AT+CNMI=2,2,0,0,0", 1500));
-      ok = pduOK && cnmiOK;
+      airSmsReady = pduOK && cnmiOK;
+      ok = airSmsReady;
       if (!ok) airError = "恢复CMGF/CNMI失败";
     }
-    if (ok) {
+    if (ok && airSchedule.targetKnown && !airApnReady) {
+      airApnReady = atResponseOK(transactionATCommand("AT+CGDCONT=1,\"IP\",\"\"", 1500));
+      ok = airApnReady;
+      if (!ok) airError = "启动APN重置失败";
+    }
+    if (ok && airSchedule.targetKnown) {
       airRestoring = false;
       String sim = transactionATCommand("AT+CPIN?", 1000);
       airSimReady = atResponseOK(sim) && sim.indexOf("\n+CPIN: READY\n") >= 0;
       String reg = transactionATCommand("AT+CEREG?", 1000);
-      int n = -1, stat = -1;
-      int pos = reg.indexOf("\n+CEREG:");
-      airRegistered = atResponseOK(reg) && pos >= 0 &&
-        sscanf(reg.c_str() + pos + 8, "%d,%d", &n, &stat) == 2 && (stat == 1 || stat == 5);
+      airRegistered = registeredCereg(reg);
       String attached = transactionATCommand("AT+CGATT?", 1000);
       airAttached = atResponseOK(attached) && attached.indexOf("\n+CGATT: 1\n") >= 0;
     }
@@ -89,7 +118,7 @@ void serviceAirplaneMode() {
   airSwitching = false;
   if (ok) { airError = String(); airFailures = 0; }
   else if (airFailures < 5) ++airFailures;
-  airRetryAt = millis() + (ok ? 15000UL : (1000UL << airFailures));
+  airRetryAt = millis() + (ok ? (airActual == 4 ? 60000UL : 15000UL) : (1000UL << airFailures));
 }
 
 static String airTime(int minute) {

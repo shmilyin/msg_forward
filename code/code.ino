@@ -131,6 +131,7 @@ void setup() {
   server.on("/timer", HTTP_POST, handleTimer);
   server.on("/query", handleQuery);
   server.on("/restart", HTTP_POST, handleRestart);     // 重启
+  server.on("/storage/init", HTTP_POST, handleStorageInit);
   server.on("/history/clear", handleClearSmsHistory);
   server.on("/history", handleSmsHistory);             // 短信历史
   server.on("/stats", handleStats);                    // 统计信息

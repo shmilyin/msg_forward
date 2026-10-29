@@ -267,6 +267,10 @@ const char htmlPage[] PROGMEM = R"PAGE(<!DOCTYPE html><html><head><meta charset=
         <button type="button" id="clearHistBtn" class="btn btn-d" style="width:auto;padding:8px 12px;font-size:0.85em" onclick="clearHist()">清空全部</button>
       </div>
     </div>
+    <div id="storageWarning" style="padding:12px 16px" role="alert" hidden>
+      <p>短信存储未挂载，无法保存历史。首次使用可初始化；挂载失败也可能是已有数据损坏，请先检查备份。</p>
+      <button type="button" id="storageInitBtn" class="btn btn-d" onclick="initStorage()">初始化未挂载存储（清除分区数据）</button>
+    </div>
     <div class="sms-container" id="smsContainer">
       <div class="contact-list" id="contactList">
         <div style="text-align:center;padding:20px;color:#94a3b8;font-size:0.85em">加载中...</div>
@@ -323,7 +327,8 @@ function renderAir(d){
 async function refreshAir(fill){try{const r=await fetch('/airplane');if(r.ok===false)throw new Error('HTTP '+r.status);const d=await r.json();if(fill&&!airLoaded){if(!airEdited){$('airEnabled').value=String(d.enabled);$('airStart').value=d.start;$('airEnd').value=d.end;airRule()}airLoaded=true}renderAir(d)}catch(e){$('airError').textContent='飞行状态读取失败，请等待刷新或检查设备连接。';$('airError').hidden=false}}
 function saveAir(e){e.preventDefault();return post('/airplane/save',new URLSearchParams(new FormData(e.target)))}
 function airAction(action){return post('/airplane/action',new URLSearchParams({action}))}
-async function refresh(){try{const d=await(await fetch('/stats')).json();$('ssRecv').textContent=d.received;$('ssSent').textContent=d.sent;$('ssBoot').textContent=d.boots;$('wifiS').textContent=d.wifiRssi+' dBm';$('upT').textContent='运行 '+Math.floor(d.uptime/3600)+' 小时 / 内存 '+(d.freeHeap/1024).toFixed(0)+'K'}catch(e){notice('设备状态读取失败')}return refreshAir(true)}
+async function initStorage(){if(!confirm('此操作会格式化未挂载的短信存储分区，原有短信历史将无法恢复。仅在确认首次使用或已备份数据后继续，是否初始化？'))return;const b=$('storageInitBtn');b.disabled=true;try{const d=await post('/storage/init',new URLSearchParams({confirm:'ERASE_UNMOUNTED_STORAGE'}));if(d&&d.success){await refresh();await loadHist()}}finally{b.disabled=false}}
+async function refresh(){try{const d=await(await fetch('/stats')).json();$('ssRecv').textContent=d.received;$('ssSent').textContent=d.sent;$('ssBoot').textContent=d.boots;$('wifiS').textContent=d.wifiRssi+' dBm';$('storageWarning').hidden=d.storageReady!==false;$('upT').textContent='运行 '+Math.floor(d.uptime/3600)+' 小时 / 内存 '+(d.freeHeap/1024).toFixed(0)+'K'}catch(e){notice('设备状态读取失败')}return refreshAir(true)}
 async function autoLoad(){await refresh();await query('network');await query('signal');await query('siminfo')}
 function act(t){if(t==='sms')return post('/sendsms',new URLSearchParams({phone:$('sPh').value,content:$('sTx').value}));if(t==='reboot')return post('/restart',new URLSearchParams());if(t==='ping')return post('/ping',new URLSearchParams()).then(d=>{$('pLog').style.display='block';$('pLog').textContent=d.message})}
 async function query(type){try{const d=await(await fetch('/query?type='+type)).json();if(type==='siminfo'){$('modSim').textContent=d.success?'SIM OK':'SIM ERR';$('modSim').className='badge '+(d.success?'b-ok':'b-err')}else{const e=$(type==='network'?'modNet':'modSig');e.innerHTML=d.message;if(type==='network')e.style.color=d.success?'#15803d':'#b91c1c'}}catch(e){notice('查询失败')}}
