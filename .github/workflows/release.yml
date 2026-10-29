@@ -1,0 +1,106 @@
+name: Build and publish ESP32-C3 firmware
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pinned toolchain
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          lock = json.loads(Path('toolchain-lock.json').read_text())
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('CLI_VERSION=' + lock['arduino_cli'] + '\n')
+              out.write('CORE=' + lock['core'] + '\n')
+              out.write('FQBN=' + lock['fqbn'] + '\n')
+              out.write('LIBRARIES=' + ' '.join(k + '@' + v for k, v in lock['libraries'].items()) + '\n')
+              for key, directory in [('DATA', 'data'), ('DOWNLOADS', 'downloads'), ('USER', 'user')]:
+                  out.write('ARDUINO_DIRECTORIES_' + key + '=' + str(Path('.arduino', directory).resolve()) + '\n')
+          PY
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: ${{ env.CLI_VERSION }}
+      - name: Install pinned dependencies
+        shell: bash
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install "$CORE" --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          read -ra libraries <<< "$LIBRARIES"
+          arduino-cli lib install "${libraries[@]}"
+      - name: Build firmware
+        shell: bash
+        run: |
+          mkdir -p build/esp32c3 release
+          set -o pipefail
+          arduino-cli compile --fqbn "$FQBN" --warnings all --build-path "$PWD/build/esp32c3" code 2>&1 | tee release/compile.log
+      - name: Package firmware and release notes
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, zipfile
+          from pathlib import Path
+          version, commit = os.environ['VERSION'], os.environ['COMMIT']
+          root, out = Path('build/esp32c3'), Path('release')
+          app = root / 'code.ino.bin'
+          (out / ('msg_forward-esp32c3-' + version + '.bin')).write_bytes(app.read_bytes())
+          manifest = {'version': version, 'commit': commit, 'fqbn': os.environ['FQBN'], 'toolchain': json.loads(Path('toolchain-lock.json').read_text()), 'files': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.glob('*.bin'))}}
+          (out / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          with zipfile.ZipFile(out / ('msg_forward-esp32c3-' + version + '.zip'), 'w', zipfile.ZIP_DEFLATED) as archive:
+              for p in sorted(root.glob('*.bin')):
+                  archive.write(p, p.name)
+              archive.write(out / 'manifest.json', 'manifest.json')
+              archive.write('README.md', 'README.md')
+              archive.write('toolchain-lock.json', 'toolchain-lock.json')
+          (out / 'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(out.iterdir()) if p.is_file()), encoding='utf-8')
+          notes = '''## ESP32-C3短信转发器：稳定性修复、飞书和定时飞行
+
+          - 修复HTTP/TLS生命周期、SMTP配置混用与断网失败统计；飞书校验业务响应。
+          - 恢复APN启动初始化，完善未校时短信接收、CFUN回读、CEREG解析及长短信队列。
+          - 修复短信历史尾行恢复、独立保号任务保存及旧JSON接口兼容。
+          - 保留原版四Tab界面、飞书通道、每日定时飞行及一键清空本地历史；移除MQTT/HA和两类过滤。
+          - 发布前本地八组回归与真实ESP32-C3编译通过，COM3设备烧录校验及只读健康检查通过。
+
+          ## 固件与刷写
+
+          适用ESP32-C3、4MB Flash、huge_app分区。独立.bin为应用固件，仅在已有相同分区布局时写入0x10000。ZIP包含应用、引导、分区等构建产物，具体文件见manifest.json；首次烧录建议按仓库README使用Arduino CLI。请勿对保留配置的设备执行整片擦除；merged.bin仅适合明确知道完整Flash镜像用途的用户。
+
+          固件由GitHub Actions按toolchain-lock.json锁定依赖构建，SHA256SUMS.txt提供下载校验值，compile.log记录云端实际构建。源码中的WiFi模板与默认管理账号需要按实际部署配置。
+
+          ## 验证边界
+
+          未完成真实短信收发、主动飞行切换、掉电故障和72小时/7天验收。同步短信提交最多等待30秒，超时标记结果未知并暂停发送，核实后重启；有限队列无法保证无限突发不丢。HTTPS目前跳过证书验证。
+          '''
+          import textwrap
+          (out / 'release-notes.md').write_text(textwrap.dedent(notes).strip() + '\n\nCommit: `' + commit + '`\n', encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32c3-${{ github.ref_name }}
+          path: release/
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          gh release create "$VERSION" --verify-tag --title "$VERSION · ESP32-C3稳定性修复版" --notes-file release/release-notes.md release/*.bin release/*.zip release/manifest.json release/SHA256SUMS.txt release/compile.log
