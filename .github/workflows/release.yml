@@ -71,8 +71,12 @@ jobs:
               archive.write('README.md', 'README.md')
               archive.write('toolchain-lock.json', 'toolchain-lock.json')
           (out / 'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in sorted(out.iterdir()) if p.is_file()), encoding='utf-8')
-          notes = '''## ESP32-C3短信转发器：稳定性修复、飞书和定时飞行
+          notes = '''## ESP32-C3短信转发器：推送通道精简版
 
+          - 移除Telegram Bot、企业微信和钉钉机器人推送实现、页面选项及专属字段。
+          - 保留邮件、POST JSON、Bark、GET、自定义模板和飞书；三个Web通道槽位保持不变。
+          - 旧通道类型5/6/7及未知类型加载时禁用，不复用编号；保存请求拒绝不支持的类型且不部分应用。
+          - mDNS继续保留；本版程序占用1,407,578字节，静态RAM45,888字节，程序体积减少3,178字节。
           - 修复HTTP/TLS生命周期、SMTP配置混用与断网失败统计；飞书校验业务响应。
           - 恢复APN启动初始化，完善未校时短信接收、CFUN回读、CEREG解析及长短信队列。
           - 修复短信历史尾行恢复、独立保号任务保存及旧JSON接口兼容。
@@ -103,4 +107,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ github.ref_name }}
         run: |
-          gh release create "$VERSION" --verify-tag --title "$VERSION · ESP32-C3稳定性修复版" --notes-file release/release-notes.md release/*.bin release/*.zip release/manifest.json release/SHA256SUMS.txt release/compile.log
+          gh release create "$VERSION" --verify-tag --title "$VERSION · ESP32-C3推送通道精简版" --notes-file release/release-notes.md release/*.bin release/*.zip release/manifest.json release/SHA256SUMS.txt release/compile.log
