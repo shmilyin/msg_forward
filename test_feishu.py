@@ -147,8 +147,7 @@ int main(int argc,char** argv){
   PushChannel c;CHECK(isPushChannelValid(c)==false);c.url="https://example.invalid/webhook/private-token";
   CHECK(isPushChannelValid(c));c.key1="secret";CHECK(isPushChannelValid(c));
   c.enabled=false;CHECK(!isPushChannelValid(c));c.enabled=true;c.key1="";
-  for(int t=0;t<=9;t++){c.type=(PushType)t;bool want=t>=1&&t<=8&&t!=5;CHECK(isPushChannelValid(c)==want);}
-  c.type=PUSH_TYPE_TELEGRAM;c.key1="chat";CHECK(isPushChannelValid(c));c.key1="";CHECK(!isPushChannelValid(c));
+  for(int t=-1;t<=255;t++){c.type=(PushType)t;bool want=(t>=1&&t<=4)||t==8;CHECK(isPushChannelValid(c)==want);c.key1="legacy-key";CHECK(isPushChannelValid(c)==want);c.key1="";}
   std::cout<<"OK";return 0;
  }
  if(mode=="http_lifecycle"){
@@ -183,6 +182,9 @@ int main(int argc,char** argv){
  if(mode=="signed"||mode=="unsynced"||mode=="negative")c.key1="secret-0";
  if(mode=="unsynced"||mode=="unsigned_unsynced")epoch=0;
  if(mode=="negative")epoch=-1;
+ if(mode=="removed5")c.type=(PushType)5;
+ if(mode=="removed6")c.type=(PushType)6;
+ if(mode=="removed7")c.type=(PushType)7;
  if(mode=="disabled")c.enabled=false;
  if(mode=="empty_url")c.url="";
  sendToChannel(c,"发\"送\\者\t", "内容\n第二行\r\t\\\"", "2026-10-28\n12:34");
@@ -226,7 +228,7 @@ class FeishuTest(unittest.TestCase):
         constants += '\n' + re.search(r'^#define MAX_PUSH_CHANNELS\s+\d+', conf, re.M).group()
         actual = 'int sendHttpRequest(const String&,const String&,const String&,const String&,bool=false);\n'
         actual += '\n'.join(function(source, sig) for sig in (
-            'String urlEncode(', 'String jsonEscape(', 'String telegramEscape(',
+            'String urlEncode(', 'String jsonEscape(',
             'String hmacSha256Base64(', 'bool feishuResponseSucceeded(',
             'bool readFeishuResponse(', 'int sendHttpRequest(', 'void sendToChannel('))
         actual += '\n' + function((ROOT / 'code/config.ino').read_text(encoding='utf-8'),
@@ -317,7 +319,7 @@ struct {
             self.assertEqual(result['body'], '')
 
     def test_disabled_and_empty_url(self):
-        for name in ('disabled', 'empty_url'):
+        for name in ('disabled', 'empty_url', 'removed5', 'removed6', 'removed7'):
             result = self.request(name)
             self.assertEqual((result['requests'], result['failed'], result['timeCalls']), (0, 0, 0))
 
@@ -345,9 +347,11 @@ struct {
         parser = Options()
         parser.feed(html)
         self.assertEqual({name for name in parser.selects if name.endswith('type')}, {'push0type', 'push1type', 'push2type'})
+        for removed in ('Telegram', '企业微信', '钉钉', 'Chat ID', 'SEC开头'):
+            self.assertNotIn(removed, html)
         for i in range(3):
             options = parser.selects[f'push{i}type']
-            self.assertEqual([o['value'] for o in options], list('12345678'))
+            self.assertEqual([o['value'] for o in options], list('12348'))
             self.assertEqual([o['value'] for o in options if 'selected' in o], ['8'])
             self.assertIn(f'id="k1{i}"', html)
             self.assertEqual(parser.keys[f'push{i}k1']['value'], 'key')
@@ -554,10 +558,10 @@ for(const e of document.querySelectorAll('input,select,textarea')){
 }
 for(let i=0;i<3;i++){const before=$('che'+i).value;chTog(i);check($('che'+i).value!==before,'通道开关无效');chTog(i);const w=$('wfe'+i).value;wfTog(i);check($('wfe'+i).value!==w,'WiFi开关无效');wfTog(i)}
 const en=$('smEn').value;xToggle('smEn');check($('smEn').value!==en,'邮件开关无效');
-for(let i=0;i<3;i++)for(const t of ['1','4','5','7','8']){
+for(let i=0;i<3;i++)for(const t of ['1','2','3','4','8']){
  document.getElementById('tp'+i).value=t;upd(i);
  check(getComputedStyle(document.getElementById('cf'+i)).display===(t==='4'?'block':'none'),'模板显隐');
- check(getComputedStyle(document.getElementById('k1'+i)).display===(['5','7','8'].includes(t)?'block':'none'),'密钥显隐');
+ check(getComputedStyle(document.getElementById('k1'+i)).display===(t==='8'?'block':'none'),'密钥显隐');
 }
 const rules=[...document.styleSheets].flatMap(s=>[...s.cssRules]).flatMap(r=>r.type===CSSRule.MEDIA_RULE?[...r.cssRules]:[r]);
 for(const e of document.querySelectorAll('[class]'))for(const c of e.classList){
@@ -619,9 +623,9 @@ for(let i=0;i<3;i++){
  for(const t of ['1','4','5','6','7','8','2']){
   nodes['tp'+i].value=t;upd(i);
   assert.equal(nodes['cf'+i].style.display,t==='4'?'block':'none');
-  assert.equal(nodes['k1'+i].style.display,['5','7','8'].includes(t)?'block':'none');
-  assert.equal(nodes['k1l'+i].innerText,t==='5'?'Chat ID':'加签密钥 (可选)');
-  assert.equal(input.placeholder,t==='5'?'如 123456789':t==='8'?'飞书机器人签名校验密钥（可选）':'SEC开头的密钥');
+  assert.equal(nodes['k1'+i].style.display,t==='8'?'block':'none');
+  assert.equal(nodes['k1l'+i].innerText,'加签密钥 (可选)');
+  assert.equal(input.placeholder,'飞书机器人签名校验密钥（可选）');
  }
 }
 '''

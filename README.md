@@ -6,13 +6,15 @@ ESP32-C3 通过 UART 接收 ML307R 短信，通过 WiFi 转发至邮件或 Webho
 
 ## 当前功能
 
-- 邮件、POST JSON、Bark、GET、自定义模板、Telegram、企业微信、钉钉及飞书群聊机器人；三个通道可同时配置。
+- 邮件、POST JSON、Bark、GET、自定义模板及飞书群聊机器人；三个 Web 通道可同时配置。
 - HTTP Basic 认证的管理页面、短信历史、模组查询、短信发送和Ping保号。
 - 北京时间每日单个飞行时段，支持跨午夜、手动覆盖和恢复自动。
-- 8条短信PDU队列和8条通知队列、8192字节UART接收缓冲、4096字节PDU解析容量。
+- 32条短信PDU队列和8条通知队列、8192字节UART接收缓冲、4096字节PDU解析容量。
 - 通知队列单步处理HTTP通道；SMTP使用ReadyMail内部消息的异步状态机。
 
 当前固件已删除 MQTT/Home Assistant、号码黑白名单和内容关键词过滤的源码、接口、页面及PubSubClient依赖。旧NVS键不再读写，未清空整个配置空间，WiFi、管理账号和推送配置继续保留。`homeassistant/`仅为legacy资料，当前固件不支持；外部Broker的retained实体不会自动删除。
+
+Telegram Bot、企业微信机器人 Webhook、钉钉机器人 Webhook 已移除。通道类型编号保持 `0..4,8`，`5/6/7` 保留不用；加载这三个旧值或未知类型时，仅在内存中禁用对应槽位、设为 NONE 并清空 URL、key1/key2，不映射到其他通道、不主动写回配置 NVS。保存请求使用明确类型白名单，旧值或非法参数会整次拒绝，不部分应用。mDNS 保留，可继续通过 `sms.local` 访问。
 
 ## 每日飞行与手动规则
 
@@ -38,7 +40,7 @@ API均使用现有Basic认证：
 
 恢复原版底部四个 Tab：概览、控制、历史、配置。概览显示计数和模组查询；控制包含飞行规则、手动覆盖、短信发送、流量保号和重启；历史按联系人展示聊天记录；配置使用折叠面板，保留三个推送通道。Tab 支持方向键、Home/End、Enter/空格和 `aria-selected`；默认概览，支持 `#overview`、`#control`、`#history-page`、`#config` 初始定位及 hash 切换。
 
-以 git `c95518a` 的 `web_pages.h`、`web_handlers.ino` 为界面基准，保留原 SVG、字号、间距、概览自动查询、配置开关与通道展开、历史联系人左右栏和手机返回；对照 `assets/homepage.png`，仅移除 MQTT/HA、关键词过滤和号码名单功能，并加入飞书与原卡片风格的每日飞行。原版 CSS 逐字保留，额外规则仅处理键盘焦点、长内容及语义按钮，不覆盖原版容器间距、字号或双列布局。样式保存在 Flash，由设备 GET `/assets/app.css?v=20261029-2` 分块发送，不依赖外网。匹配版本返回 `Cache-Control: public, max-age=31536000, immutable`；无版本或版本不符返回 `no-cache`，避免旧地址长期缓存新内容。修改 CSS 时同步更新 `APP_CSS_VERSION`；HTML 每次从设备认证读取，返回 `no-store`。样式资源公开只读且不包含配置、密码、Webhook 或密钥，JS 和全部 API 仍在本机。
+以 git `c95518a` 的 `web_pages.h`、`web_handlers.ino` 为界面基准，保留原 SVG、字号、间距、概览自动查询、配置开关与通道展开、历史联系人左右栏和手机返回；对照 `assets/homepage.png`，移除 MQTT/HA、关键词过滤、号码名单及 Telegram/企业微信/钉钉通道选项和专属字段，并加入飞书与原卡片风格的每日飞行。原版 CSS 逐字保留，额外规则仅处理键盘焦点、长内容及语义按钮，不覆盖原版容器间距、字号或双列布局。样式保存在 Flash，由设备 GET `/assets/app.css?v=20261029-2` 分块发送，不依赖外网。匹配版本返回 `Cache-Control: public, max-age=31536000, immutable`；无版本或版本不符返回 `no-cache`，避免旧地址长期缓存新内容。修改 CSS 时同步更新 `APP_CSS_VERSION`；HTML 每次从设备认证读取，返回 `no-store`。样式资源公开只读且不包含配置、密码、Webhook 或密钥，JS 和全部 API 仍在本机。
 
 可选外部托管只建议放置纯静态 CSS，以固定版本 URL 发布；启用前需评估断网可用性并保留本地 fallback，外部请求不应带配置或凭据。当前未启用外部 URL、未发布远程资源，也无需额外构建常量。
 

@@ -82,18 +82,69 @@ struct {bool mount=false,formatOK=true;int formats=0,begins=0;bool begin(bool er
 void recoverSmsStorage(){}
 struct {void println(const char*){}}Serial;
 '''
-actual = config[config.index('static bool smsStorageMounted'):config.index('bool clearSmsHistory()')]
+mock += r'''
+#define WIFI_SSID "default"
+#define WIFI_PASS "default-pass"
+#define DEFAULT_WEB_USER "admin"
+#define DEFAULT_WEB_PASS "admin123"
+struct Preferences {
+ std::map<std::string,String> text; std::map<std::string,int> numbers;
+ int writes=0; bool readOnly=false;
+ void begin(const char* space,bool ro){assert(std::string(space)=="sms_config"&&ro);readOnly=ro;}
+ void end(){}
+ String getString(const char* k,const String& d){auto i=text.find(k);return i==text.end()?d:i->second;}
+ int getInt(const char* k,int d){auto i=numbers.find(k);return i==numbers.end()?d:i->second;}
+ unsigned char getUChar(const char* k,unsigned char d){return getInt(k,d);}
+ bool getBool(const char* k,bool d){return getInt(k,d);}
+} preferences;
+void loadStats(){}
+void yield(){}
+'''
+actual = function(config, 'bool isPushTypeSupported(') + '\n'
+actual += function(config, 'void loadConfig(') + '\n'
+actual += config[config.index('static bool smsStorageMounted'):config.index('bool clearSmsHistory()')]
 actual += source[source.index('// 仅接受有界的扁平对象'):source.index('void handleRestart()')]
 actual += '\n' + function(source, 'void handleStats(')
 tests = r'''
 void request(std::initializer_list<std::pair<String,String>> args){server.params=args;server.status=0;server.verb=HTTP_POST;}
 void timerJson(const char* body){request({{"plain",body}});handleTimer();}
 int main(){
+ static_assert(PUSH_TYPE_NONE==0&&PUSH_TYPE_POST_JSON==1&&PUSH_TYPE_BARK==2&&PUSH_TYPE_GET==3&&PUSH_TYPE_CUSTOM==4&&PUSH_TYPE_FEISHU==8&&MAX_PUSH_CHANNELS==3,"类型编号和槽位必须保持");
+ // 逐槽加载全部旧值和未知值；只读配置，不自动持久化迁移。
+ for(int type=0;type<=255;++type){
+  for(int i=0;i<MAX_PUSH_CHANNELS;++i){
+   std::string p="push"+std::to_string(i);
+   preferences.numbers[p+"type"]=type;preferences.numbers[p+"en"]=1;
+   preferences.text[p+"url"]="legacy-url";preferences.text[p+"k1"]="legacy-key1";preferences.text[p+"k2"]="legacy-key2";
+  }
+  loadConfig();assert(preferences.readOnly&&preferences.writes==0&&saves==0);
+  bool supported=type<=4||type==8;assert(isPushTypeSupported(type)==supported);
+  for(auto& ch:config.pushChannels){
+   if(supported)assert(ch.enabled&&ch.type==type&&ch.url=="legacy-url"&&ch.key1=="legacy-key1"&&ch.key2=="legacy-key2");
+   else assert(!ch.enabled&&ch.type==PUSH_TYPE_NONE&&!ch.url.length()&&!ch.key1.length()&&!ch.key2.length());
+  }
+ }
+ config=Config();
  config.smtpServer="original";config.smtpPort=465;config.webPass="secret";
  config.timerEnabled=true;config.timerType=0;config.timerInterval=1;config.timerMessage="keep";
  request({{"smtpServer","new"}});handleSave();assert(server.status==200&&config.smtpServer=="new"&&timerPending&&timerLastMs==123&&saves==1);
  request({{"timerEn","true"},{"timerType","0"},{"timerInterval","1"},{"timerPhone",""},{"timerMessage","keep"}});handleSave();assert(server.status==200&&timerPending&&timerLastMs==123);
  auto oldSaves=saves;
+ // 先修改快照中的其他字段，再提交旧类型或越界参数，均不得部分应用。
+ for(int i=0;i<MAX_PUSH_CHANNELS;++i){
+  String p="push"+String(i);config.pushChannels[i].type=PUSH_TYPE_FEISHU;
+  config.pushChannels[i].url="original-url";config.pushChannels[i].key1="original-key";
+  for(const char* bad:{"5","6","7","9","255","-1","2147483648","8x","8.0",""}){
+   request({{"smtpServer","bad"},{p+"url","bad-url"},{p+"k1","bad-key"},{p+"en","true"},{p+"type",bad}});handleSave();
+   assert(server.status==400&&saves==oldSaves&&config.smtpServer=="new"&&config.pushChannels[i].type==PUSH_TYPE_FEISHU&&config.pushChannels[i].url=="original-url"&&config.pushChannels[i].key1=="original-key"&&!config.pushChannels[i].enabled&&timerPending&&timerLastMs==123);
+  }
+  for(const char* type:{"0","1","2","3","4","8"}){
+   request({{p+"type",type}});handleSave();assert(server.status==200);++oldSaves;
+  }
+ }
+ for(const char* bad:{"push3type","push-1type","push00type","wifi3ssid"}){
+  request({{"smtpServer","bad"},{bad,"8"}});handleSave();assert(server.status==400&&saves==oldSaves&&config.smtpServer=="new");
+ }
  request({{"smtpServer","bad"},{"smtpPort","465x"}});handleSave();assert(server.status==400&&config.smtpServer=="new"&&saves==oldSaves);
  request({{"smtpServer","bad"},{"smtpServer","duplicate"}});handleSave();assert(server.status==400&&config.smtpServer=="new");
  request({{"timerEn","true"},{"timerType","1"},{"timerInterval","3"},{"timerPhone","+12345"},{"timerMessage","hello"}});handleTimer();

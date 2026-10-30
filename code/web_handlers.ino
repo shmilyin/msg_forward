@@ -181,19 +181,16 @@ static void streamPageConfig() {
     server.sendContent("<option value=\"2\"" + String(config.pushChannels[i].type == PUSH_TYPE_BARK ? " selected" : "") + ">Bark</option>");
     server.sendContent("<option value=\"3\"" + String(config.pushChannels[i].type == PUSH_TYPE_GET ? " selected" : "") + ">GET请求</option>");
     server.sendContent("<option value=\"4\"" + String(config.pushChannels[i].type == PUSH_TYPE_CUSTOM ? " selected" : "") + ">自定义模板</option>");
-    server.sendContent("<option value=\"5\"" + String(config.pushChannels[i].type == PUSH_TYPE_TELEGRAM ? " selected" : "") + ">Telegram Bot</option>");
-    server.sendContent("<option value=\"6\"" + String(config.pushChannels[i].type == PUSH_TYPE_WECOM ? " selected" : "") + ">企业微信</option>");
-    server.sendContent("<option value=\"7\"" + String(config.pushChannels[i].type == PUSH_TYPE_DINGTALK ? " selected" : "") + ">钉钉</option>");
     server.sendContent("<option value=\"8\"" + String((int)config.pushChannels[i].type == 8 ? " selected" : "") + ">飞书群聊机器人</option></select></div>");
     
     server.sendContent("<div class=\"fg\"><label>URL</label><input name=\"push" + idx + "url\" value=\"" + "");
     for(unsigned int j=0;j<config.pushChannels[i].url.length();j+=128) server.sendContent(htmlEscape(config.pushChannels[i].url.substring(j,j+128)));
     server.sendContent("\" placeholder=\"https://...\"></div>");
     
-    // Key1 输入框 (Telegram=Chat ID, 钉钉=加签密钥)
-    bool showK1 = (config.pushChannels[i].type == PUSH_TYPE_TELEGRAM || config.pushChannels[i].type == PUSH_TYPE_DINGTALK || config.pushChannels[i].type == PUSH_TYPE_FEISHU);
-    String k1Label = (config.pushChannels[i].type == PUSH_TYPE_TELEGRAM) ? "Chat ID" : "加签密钥 (可选)";
-    String k1Hint = (config.pushChannels[i].type == PUSH_TYPE_TELEGRAM) ? "如 123456789" : "SEC开头的密钥";
+    // 仅飞书使用加签密钥。
+    bool showK1 = config.pushChannels[i].type == PUSH_TYPE_FEISHU;
+    String k1Label = "加签密钥 (可选)";
+    String k1Hint = "飞书机器人签名校验密钥（可选）";
     server.sendContent("<div id=\"k1" + idx + "\" style=\"display:" + (showK1 ? "block" : "none") + "\"><div class=\"fg\"><label id=\"k1l" + idx + "\">" + k1Label + "</label><input name=\"push" + idx + "k1\" value=\"" + "");
     for(unsigned int j=0;j<config.pushChannels[i].key1.length();j+=128) server.sendContent(htmlEscape(config.pushChannels[i].key1.substring(j,j+128)));
     server.sendContent("\" placeholder=\"" + k1Hint + "\"></div></div>");
@@ -446,7 +443,7 @@ void handleSave() {
     for (int i=0;!known && i<MAX_PUSH_CHANNELS;++i) {
       String p="push"+String(i); PushChannel& ch=next.pushChannels[i];
       if (a.name==p+"en") { known=true; ok=configBool(a,ch.enabled); }
-      else if (a.name==p+"type") { known=true; int type; ok=configNumber(a,0,8,type); if(ok) ch.type=(PushType)type; }
+      else if (a.name==p+"type") { known=true; int type; ok=configNumber(a,0,8,type) && isPushTypeSupported(type); if(ok) ch.type=(PushType)type; }
       else if (a.name==p+"name") { known=true; ok=configText(a,ch.name,128); }
       else if (a.name==p+"url") { known=true; ok=configText(a,ch.url,2048); }
       else if (a.name==p+"k1") { known=true; ok=configText(a,ch.key1,512); }

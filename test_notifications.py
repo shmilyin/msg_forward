@@ -203,11 +203,12 @@ int main(int argc,char** argv){
         processNotifications();CHECK(notificationCount==1&&saved==MAX_PUSH_CHANNELS);
         processNotifications();CHECK(lastSender=="second");
     } else if(test=="invalid_channels"){
-        config.emailEnabled=false;config.pushChannels[0].enabled=true;
-        config.pushChannels[1].enabled=true;config.pushChannels[1].type=PUSH_TYPE_TELEGRAM;
-        config.pushChannels[1].url="mock.invalid";
-        CHECK(enqueueSmsNotification("s","m","t"));
-        for(int i=0;i<=MAX_PUSH_CHANNELS;i++)processNotifications();CHECK(httpCalls==0);emptySlots();
+        config.emailEnabled=false;
+        for(int type:{0,5,6,7,9,255}){
+            for(auto& ch:config.pushChannels){ch.enabled=true;ch.type=type;ch.url="mock.invalid";ch.key1="legacy-key";}
+            CHECK(enqueueSmsNotification("s","m","t"));
+            for(int i=0;i<=MAX_PUSH_CHANNELS;i++)processNotifications();CHECK(httpCalls==0);emptySlots();
+        }
     } else if(test=="unsynced"){
         epoch=99999;queueMail();processNotifications();emptySlots();
         CHECK(stats.pushFailed==1&&saved==1&&smtp.connects==0&&smtp.loops==0&&clockMs==0);

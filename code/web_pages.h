@@ -384,12 +384,12 @@ function backToList(focus=true){document.querySelector('.chat-area').classList.r
 function upd(i){
   var t=$('tp'+i).value;
   $('cf'+i).style.display=(t=='4')?'block':'none';
-  var showK1=(t=='5'||t=='7'||t=='8');
+  var showK1=(t=='8');
   $('k1'+i).style.display=showK1?'block':'none';
   var lbl=$('k1l'+i);
-  if(lbl){lbl.innerText=(t=='5')?'Chat ID':'加签密钥 (可选)';}
+  if(lbl){lbl.innerText='加签密钥 (可选)';}
   var key=$('k1'+i).querySelector('input');
-  if(key){key.placeholder=(t=='5')?'如 123456789':(t=='8'?'飞书机器人签名校验密钥（可选）':'SEC开头的密钥');}
+  if(key){key.placeholder='飞书机器人签名校验密钥（可选）';}
 }
 for(let i=0;i<3;i++)upd(i);
 

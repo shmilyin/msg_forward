@@ -2,7 +2,7 @@
  * push_service.ino - 推送服务函数实现
  * 
  * 支持 HTTPS 请求（跳过证书验证）
- * 支持钉钉加签验证
+ * 支持飞书加签验证
  */
 
 #include <mbedtls/md.h>
@@ -51,23 +51,7 @@ String jsonEscape(const String& str) {
   return result;
 }
 
-// Telegram Markdown 转义函数
-String telegramEscape(const String& str) {
-  String result = "";
-  for (unsigned int i = 0; i < str.length(); i++) {
-    char c = str.charAt(i);
-    // 转义 Markdown 特殊字符: _ * [ ] ( ) ~ ` > # + - = | { } . !
-    if (c == '_' || c == '*' || c == '[' || c == ']' || c == '(' || c == ')' ||
-        c == '~' || c == '`' || c == '>' || c == '#' || c == '+' || c == '-' ||
-        c == '=' || c == '|' || c == '{' || c == '}' || c == '.' || c == '!') {
-      result += '\\';
-    }
-    result += c;
-  }
-  return result;
-}
-
-// HMAC-SHA256 签名（用于钉钉加签）
+// HMAC-SHA256 签名（用于飞书加签）
 String hmacSha256Base64(const String& secret, const String& data) {
   unsigned char hmacResult[32];
   
@@ -331,82 +315,6 @@ void sendToChannel(const PushChannel& channel, const char* sender, const char* m
       body.replace("{timestamp}", timestampEscaped);
       Serial.println("自定义: " + body);
       sendHttpRequest(channel.url, "POST", "application/json", body);
-      break;
-    }
-    
-    case PUSH_TYPE_TELEGRAM: {
-      // Telegram Bot 推送
-      // URL格式: https://api.telegram.org/bot<TOKEN>/sendMessage
-      // 使用 MarkdownV2 模式，需要转义特殊字符
-      String senderTg = telegramEscape(String(sender));
-      String messageTg = telegramEscape(String(message));
-      String timestampTg = telegramEscape(String(timestamp));
-      String text = "📱 *来自: " + senderTg + "*\n" + messageTg + "\n\n_" + timestampTg + "_";
-      String jsonData = "{";
-      jsonData += "\"chat_id\":\"" + channel.key1 + "\",";
-      jsonData += "\"text\":\"" + jsonEscape(text) + "\",";
-      jsonData += "\"parse_mode\":\"MarkdownV2\"";
-      jsonData += "}";
-      Serial.println("Telegram: " + jsonData);
-      sendHttpRequest(channel.url, "POST", "application/json", jsonData);
-      break;
-    }
-    
-    case PUSH_TYPE_WECOM: {
-      // 企业微信机器人 (Webhook)
-      // URL格式: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
-      String content = "📱 来自: " + String(sender) + "\n" + String(message) + "\n\n" + String(timestamp);
-      String jsonData = "{";
-      jsonData += "\"msgtype\":\"text\",";
-      jsonData += "\"text\":{\"content\":\"" + jsonEscape(content) + "\"}";
-      jsonData += "}";
-      Serial.println("企业微信: " + jsonData);
-      sendHttpRequest(channel.url, "POST", "application/json", jsonData);
-      break;
-    }
-    
-    case PUSH_TYPE_DINGTALK: {
-      // 钉钉机器人 (Webhook)
-      // URL格式: https://oapi.dingtalk.com/robot/send?access_token=xxx
-      // 如果配置了加签密钥（key1），则需要添加签名
-      
-      String requestUrl = channel.url;
-      
-      // 检查是否需要加签
-      if (channel.key1.length() > 0) {
-        // 获取当前时间戳（毫秒）- 使用 millis() 补充真实毫秒精度
-        unsigned long long timestampMs = (unsigned long long)time(nullptr) * 1000ULL + (millis() % 1000);
-        // 格式化为 13 位时间戳字符串
-        char timestampBuf[16];
-        snprintf(timestampBuf, sizeof(timestampBuf), "%llu", timestampMs);
-        String timestampStr = String(timestampBuf);
-        
-        // 构造签名字符串
-        String stringToSign = timestampStr + "\n" + channel.key1;
-        
-        // 计算 HMAC-SHA256 签名
-        String sign = hmacSha256Base64(channel.key1, stringToSign);
-        sign = urlEncode(sign);
-        
-        // 添加签名参数到 URL
-        if (requestUrl.indexOf('?') == -1) {
-          requestUrl += "?";
-        } else {
-          requestUrl += "&";
-        }
-        requestUrl += "timestamp=" + timestampStr;
-        requestUrl += "&sign=" + sign;
-        
-        Serial.println("钉钉加签URL: " + requestUrl);
-      }
-      
-      String content = "📱 来自: " + String(sender) + "\n" + String(message) + "\n\n" + String(timestamp);
-      String jsonData = "{";
-      jsonData += "\"msgtype\":\"text\",";
-      jsonData += "\"text\":{\"content\":\"" + jsonEscape(content) + "\"}";
-      jsonData += "}";
-      Serial.println("钉钉: " + jsonData);
-      sendHttpRequest(requestUrl, "POST", "application/json", jsonData);
       break;
     }
     

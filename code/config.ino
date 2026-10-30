@@ -67,6 +67,13 @@ void loadConfig() {
     ch.key1 = preferences.getString((p + "k1").c_str(), "");
     ch.key2 = preferences.getString((p + "k2").c_str(), "");
     ch.customBody = preferences.getString((p + "body").c_str(), "");
+    if (!isPushTypeSupported(ch.type)) {
+      ch.enabled = false;
+      ch.type = PUSH_TYPE_NONE;
+      ch.url = "";
+      ch.key1 = "";
+      ch.key2 = "";
+    }
   }
   config.timerEnabled = preferences.getBool("timerEn", false);
   config.timerType = preferences.getInt("timerType", 0);
@@ -90,6 +97,19 @@ void loadConfig() {
   loadStats();
 }
 
+bool isPushTypeSupported(int type) {
+  switch (type) {
+    case PUSH_TYPE_NONE:
+    case PUSH_TYPE_POST_JSON:
+    case PUSH_TYPE_BARK:
+    case PUSH_TYPE_GET:
+    case PUSH_TYPE_CUSTOM:
+    case PUSH_TYPE_FEISHU:
+      return true;
+    default: return false;
+  }
+}
+
 bool isPushChannelValid(const PushChannel& ch) {
   if (!ch.enabled) return false;
   switch (ch.type) {
@@ -97,12 +117,8 @@ bool isPushChannelValid(const PushChannel& ch) {
     case PUSH_TYPE_BARK:
     case PUSH_TYPE_GET:
     case PUSH_TYPE_CUSTOM:
-    case PUSH_TYPE_WECOM:
-    case PUSH_TYPE_DINGTALK:
     case PUSH_TYPE_FEISHU:
       return ch.url.length() > 0;
-    case PUSH_TYPE_TELEGRAM:
-      return ch.url.length() > 0 && ch.key1.length() > 0;
     default: return false;
   }
 }
