@@ -14,13 +14,16 @@ bool atResponseOK(const String& response) { return response.endsWith("\nOK\n"); 
 bool atErrorLine(const String& line) {
   return line == "ERROR" || line.startsWith("+CME ERROR:") || line.startsWith("+CMS ERROR:");
 }
-String waitATResponse(unsigned long timeout, bool prompt, bool ping) {
+static String waitATResponseObserved(unsigned long timeout, bool prompt, bool ping, ATLineObserver observer, void* context) {
   const unsigned int MAX_RESPONSE = 2048;
   unsigned long start = millis();
   String response = "\n";
   while ((unsigned long)(millis() - start) < timeout) {
+    unsigned long overflows = modemLineOverflowCount();
     String line = readModemLine(prompt);
+    if (observer && modemLineOverflowCount() != overflows) observer("", true, context);
     if (line.length() && !dispatchModemURC(line)) {
+      if (observer) observer(line, false, context);
       bool terminal = atErrorLine(line) || (prompt ? line == ">" : (ping ? line.startsWith("+MPING:") : line == "OK"));
       if (response.length() + line.length() + 1 > MAX_RESPONSE && terminal) response = "\n";
       if (response.length() + line.length() + 1 <= MAX_RESPONSE) { response += line; response += '\n'; }
@@ -30,7 +33,10 @@ String waitATResponse(unsigned long timeout, bool prompt, bool ping) {
   }
   markATTimeout(); return response;
 }
-String transactionATCommand(const char* cmd, unsigned long timeout) {
+String waitATResponse(unsigned long timeout, bool prompt, bool ping) {
+  return waitATResponseObserved(timeout, prompt, ping, nullptr, nullptr);
+}
+String transactionATCommandObserved(const char* cmd, unsigned long timeout, ATLineObserver observer, void* context) {
   if (!atBusy || !cmd) return "\nERROR\n";
   if (atTimedOut) {
     unsigned long start = millis();
@@ -52,7 +58,10 @@ String transactionATCommand(const char* cmd, unsigned long timeout) {
     yield();
   }
   Serial1.println(cmd);
-  return waitATResponse(timeout, String(cmd).startsWith("AT+CMGS="), String(cmd).startsWith("AT+MPING="));
+  return waitATResponseObserved(timeout, String(cmd).startsWith("AT+CMGS="), String(cmd).startsWith("AT+MPING="), observer, context);
+}
+String transactionATCommand(const char* cmd, unsigned long timeout) {
+  return transactionATCommandObserved(cmd, timeout, nullptr, nullptr);
 }
 String sendATCommand(const char* cmd, unsigned long timeout) {
   ATTransaction transaction;

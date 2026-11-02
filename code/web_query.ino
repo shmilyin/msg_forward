@@ -2,6 +2,84 @@
  * web_query.ino - 模组查询和网络测试处理函数
  */
 
+// 按完整响应行匹配，避免把URC或后续OK拼进字段。
+static String queryResponseLine(const String& response, const char* prefix) {
+  if (!atResponseOK(response)) return "";
+  for (unsigned int start = 0; start < response.length();) {
+    int end = response.indexOf('\n', start);
+    if (end < 0) end = response.length();
+    String line = response.substring(start, end); line.trim();
+    if (line.startsWith(prefix)) return line;
+    start = end + 1;
+  }
+  return "";
+}
+static bool operatorDigits(const String& value, unsigned int min, unsigned int max) {
+  if (value.length() < min || value.length() > max) return false;
+  for (unsigned int i = 0; i < value.length(); ++i)
+    if (value[i] < '0' || value[i] > '9') return false;
+  return true;
+}
+// COPS的oper允许逗号及空格，不能简单按逗号拆分。
+static bool parseOperator(const String& response, int& format, String& name) {
+  String line = queryResponseLine(response, "+COPS:");
+  int mode = -1, used = 0; format = -1; name = "";
+  if (sscanf(line.c_str(), "+COPS: %d , %d , %n", &mode, &format, &used) != 2 ||
+      !used || mode < 0 || mode > 4 || format < 0 || format > 2) return false;
+  String rest = line.substring(used); rest.trim();
+  if (!rest.startsWith("\"")) return false;
+  int end = rest.indexOf('"', 1);
+  if (end < 0) return false;
+  name = rest.substring(1, end);
+  String tail = rest.substring(end + 1); tail.trim();
+  if (tail.length() && !tail.startsWith(",")) { name = ""; return false; }
+  if (!name.length() || name.length() > 96 ||
+      (format == 2 && !operatorDigits(name, 5, 6))) { name = ""; return false; }
+  return true;
+}
+static String operatorName(const String& plmn) {
+  if (plmn == "46000" || plmn == "46002" || plmn == "46004" || plmn == "46007" || plmn == "46008" || plmn == "46013") return "中国移动";
+  if (plmn == "46001" || plmn == "46006" || plmn == "46009") return "中国联通";
+  if (plmn == "46003" || plmn == "46005" || plmn == "46011") return "中国电信";
+  if (plmn == "46015") return "中国广电";
+  if (plmn == "45403" || plmn == "45404" || plmn == "45405") return "3（中国香港）";
+  if (plmn == "45400" || plmn == "45402" || plmn == "45418") return "CSL（中国香港）";
+  if (plmn == "45412" || plmn == "45413") return "中国移动（中国香港）";
+  if (plmn == "45406" || plmn == "45415" || plmn == "45417") return "数码通（中国香港）";
+  if (plmn == "45407") return "中国联通（中国香港）";
+  return "";
+}
+static String homeOperator(const String& response) {
+  if (!atResponseOK(response)) return "未知";
+  // CIMI无前缀，仅接受完整15位IMSI；不将完整用户标识输出到网络卡片。
+  for (unsigned int start = 0; start < response.length();) {
+    int end = response.indexOf('\n', start);
+    if (end < 0) end = response.length();
+    String imsi = response.substring(start, end); imsi.trim(); start = end + 1;
+    if (!operatorDigits(imsi, 15, 15)) continue;
+    if (imsi.startsWith("460") || imsi.startsWith("454")) {
+      String plmn = imsi.substring(0, 5), name = operatorName(plmn);
+      if (name.length()) return name + " (" + plmn + ")";
+    }
+    // 其他MCC的MNC可能为2位或3位，未读EF-AD前不猜归属PLMN。
+    return "SIM归属 MCC " + imsi.substring(0, 3) + "（MNC未确认）";
+  }
+  return "未知";
+}
+static int networkRegistration(const String& response) {
+  if (!atResponseOK(response)) return -1;
+  for (unsigned int start = 0; start < response.length();) {
+    int end = response.indexOf('\n', start);
+    if (end < 0) end = response.length();
+    String line = response.substring(start, end); line.trim(); start = end + 1;
+    int mode = -1, stat = -1, used = 0;
+    if (sscanf(line.c_str(), "+CEREG: %d , %d %n", &mode, &stat, &used) == 2 &&
+        used && mode >= 0 && mode <= 5 && stat >= 0 && stat <= 10 &&
+        (!line[used] || line[used] == ',')) return stat;
+  }
+  return -1;
+}
+
 // 处理模组信息查询请求
 void handleQuery() {
   if (!checkAuth()) return;
@@ -164,38 +242,48 @@ void handleQuery() {
     
     String resp = transactionATCommand("AT+CEREG?", 2000);
     String regStatus = "未知";
-    if (resp.indexOf("+CEREG:") >= 0) {
-      int idx0 = resp.indexOf("+CEREG:");
-      String tmp = resp.substring(idx0 + 7);
-      int commaIdx = tmp.indexOf(',');
-      if (commaIdx >= 0) {
-        String stat = tmp.substring(commaIdx + 1, commaIdx + 2);
-        int s = stat.toInt();
-        switch(s) {
-          case 0: regStatus = "未注册，未搜索"; break;
-          case 1: regStatus = "已注册，本地网络"; break;
-          case 2: regStatus = "未注册，正在搜索"; break;
-          case 3: regStatus = "注册被拒绝"; break;
-          case 4: regStatus = "未知"; break;
-          case 5: regStatus = "已注册，漫游"; break;
-          default: regStatus = "状态码: " + stat;
-        }
-      }
+    int registration = networkRegistration(resp);
+    switch (registration) {
+      case 0: regStatus = "未注册，未搜索"; break;
+      case 1: regStatus = "已注册，本地网络"; break;
+      case 2: regStatus = "未注册，正在搜索"; break;
+      case 3: regStatus = "注册被拒绝"; break;
+      case 5: regStatus = "已注册，漫游"; break;
+      default: break;
     }
     message += "<tr><td>网络注册</td><td>" + regStatus + "</td></tr>";
-    
-    resp = transactionATCommand("AT+COPS?", 2000);
-    String oper = "未知";
-    if (resp.indexOf("+COPS:") >= 0) {
-      int idx0 = resp.indexOf(",\"");
-      if (idx0 >= 0) {
-        int endIdx0 = resp.indexOf("\"", idx0 + 2);
-        if (endIdx0 > idx0) {
-          oper = resp.substring(idx0 + 2, endIdx0);
+    String home = homeOperator(transactionATCommand("AT+CIMI", 1500));
+    message += "<tr><td>原始运营商（SIM归属）</td><td>" + htmlEscape(home) + "</td></tr>";
+
+    resp = transactionATCommand("AT+COPS?", 1500);
+    int format; String oper, plmn;
+    bool operatorOK = parseOperator(resp, format, oper);
+    bool registered = registration == 1 || registration == 5;
+    bool restored = true;
+    if (operatorOK && registered) {
+      if (format == 2) plmn = oper;
+      else {
+        // mode=3仅改变显示格式，不执行选网；查询后总是恢复原格式。
+        bool numeric = atResponseOK(transactionATCommand("AT+COPS=3,2", 1000));
+        if (numeric) {
+          int numericFormat; String numericName;
+          if (parseOperator(transactionATCommand("AT+COPS?", 1500), numericFormat, numericName) && numericFormat == 2)
+            plmn = numericName;
         }
+        String restore = "AT+COPS=3," + String(format);
+        restored = atResponseOK(transactionATCommand(restore.c_str(), 1000));
       }
     }
-    message += "<tr><td>运营商</td><td>" + htmlEscape(oper) + "</td></tr>";
+    String current = !registered ? "未驻网" : operatorOK ? oper : "未知";
+    if (registered && plmn.length()) {
+      String resolved = operatorName(plmn);
+      if (resolved.length() && resolved != current) current += " / " + resolved;
+      if (current != plmn) current += " (" + plmn + ")";
+    }
+    message += "<tr><td>" + String(registration == 5 ? "漫游运营商（当前驻网）" : "当前驻网运营商") +
+      "</td><td>" + htmlEscape(current) + "</td></tr>";
+    message += "<tr><td>驻网PLMN</td><td>" + String(!registered ? "未驻网" : plmn.length() ? plmn : "未获取") + "</td></tr>";
+    if (!restored) message += "<tr><td>查询提示</td><td>运营商显示格式恢复未确认，下次查询将按模组实际格式显示</td></tr>";
     
     resp = transactionATCommand("AT+CGACT?", 2000);
     String pdpStatus = "未激活";

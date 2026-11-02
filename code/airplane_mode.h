@@ -55,6 +55,10 @@ class ATTransaction {
   ATTransaction(const ATTransaction&) = delete;
   ATTransaction& operator=(const ATTransaction&) = delete;
 };
+typedef void (*ATLineObserver)(const String& line, bool overflow, void* context);
+String transactionATCommandObserved(const char* cmd, unsigned long timeout, ATLineObserver observer, void* context);
+unsigned long modemLineOverflowCount();
+bool modemDiagnosticSwitching();
 bool modemTransactionBusy();
 String transactionATCommand(const char* cmd, unsigned long timeout);
 void markATTimeout();

@@ -36,6 +36,22 @@ API均使用现有Basic认证：
 
 新增修改接口严格拒绝缺失、重复、额外参数及非法布尔/时间。202表示已接受、等待模组确认，页面继续读取实际状态，不将接受请求显示成切换成功。系统配置和飞行规则分别保存。
 
+## STK 实验诊断与被动菜单（尚未完成菜单操作）
+
+2026-11-02增量：新增 `op=profile` 固定发送 `AT+MSTK=3`，已真机读取Terminal Profile。新增认证 `GET /stk/menu`，只读取ESP32本次开机后被动缓存的 `+MSTK:11,"BER-TLV"` SET UP MENU，最多240字节/16项，支持UCS2及ASCII子集、移除菜单和畸形拒绝；不自动启用通知或选择菜单。页面共六个按钮，不自动轮询STK。真机目前未收到菜单，不代表SIM不支持。
+
+同型号公开SDK反汇编已核实：0配置通知、1下载Profile、2查询能力、3读取缓存Profile；其中2还会释放缓存主动命令，模组主动命令处理存在自动应答路径，因此本固件不开放2、启用/下载Profile、Envelope或菜单选择。公开SDK不能保证与真机完整构建一致。以下段落记录初始四项诊断的实现，新增Profile读取不属于Profile下载。
+
+概览的网络卡片同时显示SIM归属、原COPS运营商名称、漫游/当前驻网运营商及PLMN。查询通过 `COPS=3,2` 临时切换数值显示，再恢复原格式，不执行选网；完整IMSI不输出到网络卡片。常见460/454归属码有内置名称，其他MCC不猜测MNC长度。11月2日真机SIM归属3（中国香港，45403）、驻网中国联通46001，COPS原名3保留。当前设备可从 `http://sms.local/` 或 `http://10.10.1.50/` 访问。
+
+参考 `build/stk-research/at-reference.txt` 仅核实了 `AT+CLAC` 与 `AT+CSIM=?` 测试形式，没有已核实的 ML307R STK 菜单命令。据实机反馈，ATI为 `ML307R-DC-MBRH0S00`，CLAC的374行中已发现 `AT+MSTK`、`AT+CSIM`、`AT+CRSM`，但3秒内未收到终结行。概览页原状态看板内提供获取型号、扫描能力、测试 SIM 接口、查询STK参数四个按钮，只在点击时执行一次，不自动轮询。
+
+Basic 认证的 `POST /stk/probe` 只接受一个表单参数 `op=model/commands/sim_access/mstk_test`，分别固定发送 `ATI`、`AT+CLAC`、`AT+CSIM=?`、`AT+MSTK=?`。MSTK仅发送标准AT参数测试形式；若ERROR仅表示测试形式不支持，不能推断命令不存在；不发送数字操作、裸读或启用命令。拒绝缺失、重复、额外参数、自由命令和方法覆盖；其他 HTTP 方法返回405，事务忙或切换中返回409。不要求SIM已注册，不调用开机、重启、射频设置，不执行APDU、STK enable/menu/envelope/terminal profile。
+
+复用共享 `ATTransaction`、逐行 reader、URC分发及原有超时重同步。commands命令等待6000ms，其他op仍为3000ms；加上既有250ms排空、最多1.5秒的只读 `AT+CFUN?` 重同步及20ms预读，commands总等待预算小于8000ms，其他op小于5000ms；未改变其他调用的超时语义。CLAC逐行观察，不受2048字节累计响应截断影响，只返回行数、最多32个命令名候选（每项最多80字符），不返回完整列表。识别命令token中的STK/SAT/USAT命名族及CSIM/CRSM/CUSAT*，STATUS不会因包含SAT字母而误报。返回 `terminated`、`timeout`、`truncated`（行过长、候选或原始响应截断）、`error`；仅完整OK且未截断的扫描允许显示 `not advertised`，这只代表未列出，不代表不支持。ERROR、未终结和不完整扫描分别保留，发现候选或CSIM测试成功均不证明菜单可用。型号及接口测试的原始响应限2048字节，通过textContent显示。
+
+`python test_stk.py` 离线编译真实handler/reader/事务函数并执行页面JS，覆盖认证、方法/参数拒绝、事务互斥、完整长列表尾部候选、ERROR与缺失区分、超时重同步、行/候选溢出、串口洪泛、短信URC及安全文本显示；不调用设备API。实机响应和菜单接入仍待独立验证。
+
 ## 管理页面和本地样式缓存
 
 恢复原版底部四个 Tab：概览、控制、历史、配置。概览显示计数和模组查询；控制包含飞行规则、手动覆盖、短信发送、流量保号和重启；历史按联系人展示聊天记录；配置使用折叠面板，保留三个推送通道。Tab 支持方向键、Home/End、Enter/空格和 `aria-selected`；默认概览，支持 `#overview`、`#control`、`#history-page`、`#config` 初始定位及 hash 切换。
@@ -80,6 +96,7 @@ Review修复补充：实际CFUN=1但未校时时允许CMGF/CNMI短信初始化�
 python build.py setup
 python build.py host
 python test_modem.py
+python test_stk.py
 python test_notifications.py
 python test_feishu.py
 python test_airplane.py

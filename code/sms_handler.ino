@@ -366,6 +366,8 @@ void processSmsContent(const char* sender, const char* text, const char* timesta
 
 
 // 分批读取，超长行整行丢弃，不能把尾部误认成OK或PDU。
+static unsigned long modemLineOverflows = 0;
+unsigned long modemLineOverflowCount() { return modemLineOverflows; }
 String readModemLine(bool prompt) {
   static char lineBuf[SERIAL_BUFFER_SIZE];
   static unsigned int linePos = 0;
@@ -385,7 +387,7 @@ String readModemLine(bool prompt) {
     }
     if (c != '\r' && !overflow) {
       if (linePos < sizeof(lineBuf) - 1) lineBuf[linePos++] = c;
-      else overflow = true;
+      else { overflow = true; ++modemLineOverflows; }
     }
   }
   yield();
@@ -407,6 +409,8 @@ static bool waitingSmsPdu = false;
 static unsigned long smsPduStart = 0;
 
 bool dispatchModemURC(const String& line) {
+  // 观察而不吞掉MSTK查询响应；等待AT和空闲接收共用同一路径。
+  observeStkUrc(line);
   if (waitingSmsPdu && (unsigned long)(millis() - smsPduStart) >= 5000) waitingSmsPdu = false;
   if (line.startsWith("+CMT:")) {
     waitingSmsPdu = true;

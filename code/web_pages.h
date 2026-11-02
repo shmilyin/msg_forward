@@ -197,6 +197,11 @@ const char htmlPage[] PROGMEM = R"PAGE(<!DOCTYPE html><html><head><meta charset=
 
   <div class="card">
     <div class="card-t">状态看板</div>
+    <details id="stkDiagnostic"><summary>STK 实验诊断</summary><div class="det-body">
+      <p class="card-sub">支持型号/参数诊断、只读 Terminal Profile 查询及被动菜单展示。菜单来自模组主动上报，刷新缓存不会发 AT 指令。尚不启用通知、下载 Profile、释放模组缓存或选择菜单；未收到菜单不代表 SIM 不支持。部分文字编码暂显示问号。</p>
+      <div class="actions" id="stkButtons"><button type="button" class="btn btn-w" onclick="probeStk('model')">获取型号</button><button type="button" class="btn btn-w" onclick="probeStk('commands')">扫描能力</button><button type="button" class="btn btn-w" onclick="probeStk('sim_access')">测试SIM接口</button><button type="button" class="btn btn-w" onclick="probeStk('mstk_test')">查询STK参数</button><button type="button" class="btn btn-w" onclick="probeStk('profile')">读取Terminal Profile</button><button type="button" class="btn btn-w" onclick="probeStk('menu')">查看已接收菜单</button></div>
+      <pre id="stkResult" role="status" aria-live="polite">点击按钮执行一次只读诊断，不自动轮询。CLAC仅显示统计及最多32个候选，单项最多80字符。</pre>
+    </div></details>
     <div class="grid-2" style="margin-bottom:12px">
       <div class="stat-box" style="text-align:left">
         <div class="stat-tag">WiFi 信号</div>
@@ -307,6 +312,12 @@ const char htmlPage[] PROGMEM = R"PAGE(<!DOCTYPE html><html><head><meta charset=
 const $=id=>document.getElementById(id);
 let toastTimer;function notice(text){$('toast').textContent=text;$('toast').className='toast show';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').className='toast',2000)}
 async function post(url,body){try{const r=await fetch(url,{method:'POST',body});const d=await r.json();notice(d.message||'请求已处理');if(url.startsWith('/airplane'))await refreshAir(false);return d}catch(e){notice('请求失败：'+e.message)}}
+let stkBusy=false;
+async function probeStk(op){
+  if(stkBusy||!['model','commands','sim_access','mstk_test','profile','menu'].includes(op))return;
+  stkBusy=true;const buttons=[...document.querySelectorAll('#stkButtons button')];buttons.forEach(b=>b.disabled=true);$('stkResult').textContent='诊断中，请等待本次请求结束…';
+  try{const r=op==='menu'?await fetch('/stk/menu'):await fetch('/stk/probe',{method:'POST',body:new URLSearchParams({op})});const d=await r.json();$('stkResult').textContent=(r.ok?'':'HTTP '+r.status+'\n')+JSON.stringify(d,null,2)}catch(e){$('stkResult').textContent='诊断失败：'+e.message}finally{stkBusy=false;buttons.forEach(b=>b.disabled=false)}
+}
 let airLoaded=false,airEdited=false;
 function airRule(){const start=$('airStart').value,end=$('airEnd').value;if(!start||!end)return;const minutes=t=>Number(t.slice(0,2))*60+Number(t.slice(3));const span=(minutes(end)-minutes(start)+1440)%1440;$('airRule').textContent=start===end?'开始与结束时间不能相同。':(end<start?'跨日 · 次日结束':'当日结束')+' · 飞行 '+Math.floor(span/60)+' 小时'+(span%60?' '+span%60+' 分钟':'')+($('airEnabled').value==='true'?' · 每日执行':' · 调度已关闭')}
 $('air').addEventListener('input',()=>{airEdited=true;airRule()});

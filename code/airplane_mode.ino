@@ -21,6 +21,7 @@ static void updateAirTarget() {
   airSchedule.update(config.airplaneEnabled, config.airplaneStartMinute,
     config.airplaneEndMinute, config.airplaneManualTarget, time(nullptr));
 }
+bool modemDiagnosticSwitching() { return airSwitching; }
 bool cellularReady() {
   updateAirTarget();
   return airSchedule.targetKnown && !airSchedule.target && airActual == 1 &&

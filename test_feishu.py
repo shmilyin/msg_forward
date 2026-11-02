@@ -441,6 +441,28 @@ check(css('.stat-num').fontSize==='22.4px','原版指标字号被覆盖');
 check(document.querySelector('#overview .card-t').textContent.includes('统计数据'),'原版统计卡片缺失');
 check(document.querySelector('#modNet')&&document.querySelector('#modSig')&&document.querySelector('#modSim'),'原版自动查询指标缺失');
 check(css('body').backgroundColor==='rgb(248, 250, 252)','背景样式丢失');
+check(!calls.some(c=>c[0]==='/stk/probe'),'STK自动请求');
+$('stkDiagnostic').open=true;
+check(document.querySelectorAll('#stkButtons button').length===6,'STK按钮数量');
+check(document.querySelector('#stkButtons button[onclick="probeStk(\'mstk_test\')"]').textContent==='查询STK参数','STK参数按钮');
+const stkFetch=window.fetch;let stkRelease,stkCalls=[];
+window.fetch=(u,o)=>u==='/stk/probe'?(stkCalls.push([u,o]),new Promise(r=>stkRelease=r)):stkFetch(u,o);
+const stkPending=probeStk('commands');
+check([...document.querySelectorAll('#stkButtons button')].every(b=>b.disabled),'STK未禁用');
+await probeStk('model');check(stkCalls.length===1,'STK重复提交');
+check(stkCalls[0][1].method==='POST'&&stkCalls[0][1].body.toString()==='op=commands','STK固定参数');
+stkRelease({ok:true,json:async()=>({raw:'<img src=x onerror="window.stkInjected=true">'+long,candidates:Array(32).fill('AT+STK'+long.slice(0,73))})});await stkPending;
+check(!$('stkResult').querySelector('img')&&!window.stkInjected,'STK响应注入');
+check([...document.querySelectorAll('#stkButtons button')].every(b=>!b.disabled),'STK未恢复按钮');
+check(document.documentElement.scrollWidth<=innerWidth,'STK长结果水平溢出');
+for(const e of document.querySelectorAll('#stkDiagnostic *')){const r=e.getBoundingClientRect();if(r.width)check(r.left>=0&&r.right<=innerWidth,'STK元素溢出:'+e.id)}
+for(const op of ['mstk_enable','cmd','AT+MSTK=1','0','1',0,1])await probeStk(op);
+check(stkCalls.length===1,'STK非法操作发出请求');
+const mstkPending=probeStk('mstk_test');
+check(stkCalls.length===2&&stkCalls[1][1].method==='POST'&&stkCalls[1][1].body.toString()==='op=mstk_test','STK参数测试映射');
+stkRelease({ok:true,json:async()=>({command:'AT+MSTK=?',error:true,message:'测试形式不支持，不能推断命令不存在'})});await mstkPending;
+check($('stkResult').textContent.includes('不能推断命令不存在'),'STK测试ERROR说明');
+window.fetch=stkFetch;$('stkDiagnostic').open=false;
 for(let n=0;n<4;n++){
  document.querySelectorAll('[role="tab"]')[n].click();
  check(document.querySelectorAll('.page.active').length===1,'激活页面数量');

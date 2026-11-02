@@ -44,6 +44,7 @@
 #include "sms_handler.h"
 #include "push_service.h"
 #include "airplane_mode.h"
+#include "stk.h"
 
 // ========== 全局变量定义 ==========
 Config config;
@@ -135,6 +136,8 @@ void setup() {
   server.on("/history/clear", handleClearSmsHistory);
   server.on("/history", handleSmsHistory);             // 短信历史
   server.on("/stats", handleStats);                    // 统计信息
+  server.on("/stk/probe", HTTP_ANY, handleStkProbe);
+  server.on("/stk/menu", HTTP_GET, handleStkMenu);
   server.on("/airplane", HTTP_GET, handleAirplaneStatus);
   server.on("/airplane/save", HTTP_POST, handleAirplaneSave);
   server.on("/airplane/action", HTTP_POST, handleAirplaneAction);

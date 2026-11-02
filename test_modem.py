@@ -16,6 +16,7 @@ air_header = (ROOT / 'code/airplane_mode.h').read_text(encoding='utf-8')
 transaction_class = air_header[air_header.index('class ATTransaction'):air_header.index('bool modemTransactionBusy') ]
 mock = r'''
 #include <string>
+#include <vector>
 #include <deque>
 #include <functional>
 #include <algorithm>
@@ -78,9 +79,39 @@ bool cellularReady(){return true;} String cellularBlockReason(){return "blocked"
 void markATTimeout();
 String transactionATCommand(const char*,unsigned long);
 '''
+# 所有串口测试使用真实被动STK观察器，验证和短信接收共存。
+stk_source = (ROOT / 'code/stk.ino').read_text(encoding='utf-8')
+mock += (ROOT / 'code/stk.h').read_text(encoding='utf-8') + stk_source[:stk_source.index('void handleStkMenu()')]
+
+# 网络信息解析也编译真实函数，验证漫游名称、COPS格式和SIM归属。
+network = (ROOT / 'code/web_query.ino').read_text(encoding='utf-8')
+network = network[network.index('// 按完整响应行匹配'):network.index('// 处理模组信息查询请求')]
+# 网络解析仅在本测试编译，复用sms的其他测试不携带无关静态函数。
+network_body = (ROOT / 'code/web_query.ino').read_text(encoding='utf-8')
+network_body = network_body[network_body.index('  else if (type == "network") {') + len('  else if (type == "network") {'):network_body.index('  else if (type == "wifi") {')].rsplit('}', 1)[0]
+web_full = (ROOT / 'code/web_handlers.ino').read_text(encoding='utf-8')
+escape_html = web_full[web_full.index('String htmlEscape('):web_full.index('\n}', web_full.index('String htmlEscape(')) + 2]
+network += escape_html + '\nString networkFixture(){ bool success=false;String message;' + network_body + '\nassert(success);return message;}\n'
+
 tests = r'''
 void resetRx(){atTimedOut=false;Serial1.flood=false;Serial1.rx.clear();Serial1.feed("\n");readModemLine(false);waitingSmsPdu=false;smsPduCount=0;smsPduHead=0;Serial1.onCommand=nullptr;Serial1.autoSubmit=true;onTick=nullptr;smsResultUnknown=false;}
 int main(){
+ int fmt=-1;String oper;
+ assert(parseOperator("\n+COPS: 0,0,\"3\",7\nOK\n",fmt,oper)&&fmt==0&&oper=="3");
+ assert(parseOperator("\n+COPS: 0, 0, \"Example, Mobile\",7\nOK\n",fmt,oper)&&oper=="Example, Mobile");
+ assert(parseOperator("\n+COPS: 0,2,\"23420\",7\nOK\n",fmt,oper)&&fmt==2&&oper=="23420");
+ for(auto r:{"\n+COPS: 0\nOK\n","\n+COPS: 0,2,\"3\"\nOK\n","\n+COPS: 0,0,\"bad\"garbage\nOK\n","\n+COPS: 0,0,\"test\"\nERROR\n"})assert(!parseOperator(r,fmt,oper));
+ assert(networkRegistration("\n+CEREG: 5\n+CEREG: 2,5,\"1ABC\",\"11\",7\nOK\n")==5);
+ assert(networkRegistration("\n+CEREG: 2,5,\"1ABC\",\"11\",7\nOK\n")==5);
+ assert(networkRegistration("\n+CEREG: 2,1\nOK\n")==1);
+ assert(homeOperator("\n460001234567890\nOK\n").indexOf("46000")>=0);
+ assert(homeOperator("\n234201234567890\nOK\n").indexOf("234")>=0);
+ assert(homeOperator("\n234201234567890\nOK\n").indexOf("1234567890")<0);
+ assert(homeOperator("\n460001234567890\nERROR\n").indexOf("46000")<0);
+ resetRx();std::vector<String> operatorCommands;
+ Serial1.onCommand=[&](String cmd){operatorCommands.push_back(cmd);if(cmd=="AT+CEREG?")Serial1.feed("+CEREG: 2,5\nOK\n");else if(cmd=="AT+CIMI")Serial1.feed("454031234567890\nOK\n");else if(cmd=="AT+COPS?")Serial1.feed(operatorCommands.size()==3?"+COPS: 0,0,\"3\",7\nOK\n":"+COPS: 0,2,\"46001\",7\nOK\n");else Serial1.feed("OK\n");};
+ {ATTransaction owner;String card=networkFixture();assert(card.indexOf("45403")>=0&&card.indexOf("46001")>=0&&card.indexOf("1234567890")<0);}
+ assert(operatorCommands.size()>=6&&operatorCommands[3]=="AT+COPS=3,2"&&operatorCommands[5]=="AT+COPS=3,0");
  initConcatBuffer();
  assert(findOrCreateConcatSlot(1,"x",11)==-1);
  assert(findOrCreateConcatSlot(1,"x",0)==-1);
@@ -146,7 +177,7 @@ int main(){
 with tempfile.TemporaryDirectory(prefix='msg_forward_mock_') as tmp:
     source = Path(tmp) / 'test.cpp'
     exe = Path(tmp) / 'test.exe'
-    source.write_text(mock + transaction_class + web + sms + tests, encoding='utf-8')
+    source.write_text(mock + transaction_class + web + sms + network + tests, encoding='utf-8')
     compiler = ROOT / '.tools/w64devkit/bin/g++.exe'
     env = dict(os.environ)
     env['PATH'] = str(compiler.parent) + os.pathsep + env.get('PATH', '')
